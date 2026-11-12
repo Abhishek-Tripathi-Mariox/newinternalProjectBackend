@@ -15,7 +15,7 @@ export const hashToken = (t) => createHash('sha256').update(t).digest('hex');
 export const REFRESH_COOKIE = 'mx_refresh';
 export const refreshCookieOptions = () => ({
   httpOnly: true,
-  secure: config.isProd,
+  secure: config.cookieSecure,
   sameSite: 'lax',
   path: '/api/v1/auth',
   maxAge: config.jwt.refreshTtlDays * 864e5,

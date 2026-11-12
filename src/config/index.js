@@ -46,6 +46,8 @@ const schema = z.object({
   FROM_EMAIL: z.string().email().optional(), // defaults to SMTP_USER
   FROM_NAME: z.string().default('Mariox Software'),
   APP_URL: z.string().url().optional(), // frontend base URL used in email links; defaults to the first CORS origin
+  // Refresh cookie 'Secure' flag (HTTPS only). Defaults to true in production; set false only while running on plain HTTP (e.g. by IP).
+  COOKIE_SECURE: z.enum(['true', 'false']).optional(),
 });
 
 // Blank values (`KEY=`) count as unset, so optional settings can be left empty in .env.
@@ -124,6 +126,7 @@ export const config = Object.freeze({
     pass: env.SMTP_PASS,
     from: { name: env.FROM_NAME, address: env.FROM_EMAIL || env.SMTP_USER || 'no-reply@localhost' },
   },
+  cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
   appUrl: (env.APP_URL || env.CORS_ORIGINS.split(',')[0].trim()).replace(/\/+$/, ''),
   logLevel: env.NODE_ENV === 'test' ? (process.env.TEST_LOG_LEVEL || 'silent') : env.LOG_LEVEL,
 });
