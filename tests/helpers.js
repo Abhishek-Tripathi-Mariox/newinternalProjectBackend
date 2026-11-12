@@ -27,7 +27,7 @@ import { seed as seedBase } from '../src/db/seeds/01_base.js';
 export const app = createApp();
 export const PASSWORD = 'secret123';
 
-const TABLES = ['project_credentials', 'project_integrations', 'project_follow_ups', 'shift_reports', 'activity_feed', 'presence', 'active_timers', 'attendance_events', 'documents', 'time_logs', 'bug_events', 'bugs',
+const TABLES = ['milestone_members', 'project_credentials', 'project_integrations', 'project_follow_ups', 'shift_reports', 'activity_feed', 'presence', 'active_timers', 'attendance_events', 'documents', 'time_logs', 'bug_events', 'bugs',
   'tasks', 'cr_history', 'change_requests', 'milestones', 'project_links', 'project_members', 'projects', 'follow_ups', 'quotes', 'lead_activities',
   'leads', 'settings', 'services', 'lead_sources', 'lead_stages', 'audit_logs', 'refresh_tokens', 'users', 'sales_owners', 'members', 'roles'];
 

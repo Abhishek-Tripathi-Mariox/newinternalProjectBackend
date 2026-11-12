@@ -48,6 +48,7 @@ export const milestoneInput = z.object({
   name: z.string().trim().max(200).default(''),
   dueDate: day,
   allocHours: hours.default(0),
+  team: z.array(memberId).max(50).optional(),
 });
 
 export const createProjectSchema = z.object({
@@ -102,4 +103,5 @@ export const updateMilestoneSchema = z.object({
   allocHours: hours,
   status: z.enum(MILESTONE_STATUSES),
   dueDate: day,
+  team: z.array(memberId).max(50),
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');

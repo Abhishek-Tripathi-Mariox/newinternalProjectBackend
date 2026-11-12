@@ -1,6 +1,7 @@
 /** Knex queries for projects, milestones, members, links, logs and portal lookups. */
 import { db } from '../../db/knex.js';
 import { restrictTo } from '../../core/scope.js';
+import { unprocessable } from '../../core/errors.js';
 import { toProject, toMilestone, toMember, toLog } from './projects.mapper.js';
 
 const PROJECT_COLS = ['id', 'name', 'client', 'services', 'status', 'pm_member_id', 'start_date', 'due_date', 'value', 'hue', 'priority', 'brief', 'client_email', 'budget_hours',
@@ -31,14 +32,40 @@ async function attachTeamAndLinks(rows, q) {
   return rows.map((r) => toProject(r, team.filter((t) => t.project_id === r.id), links.filter((l) => l.project_id === r.id)));
 }
 
+async function withTeams(rows, q) {
+  if (!rows.length) return [];
+  const mm = await q('milestone_members').whereIn('milestone_id', rows.map((r) => r.id)).orderBy('member_id');
+  return rows.map((r) => toMilestone(r, mm.filter((x) => x.milestone_id === r.id).map((x) => x.member_id)));
+}
+
 export async function findMilestones(projectIds, q = db) {
   const rows = await restrictTo(q('milestones'), 'project_id', projectIds).orderBy(['project_id', 'n']);
-  return rows.map(toMilestone);
+  return withTeams(rows, q);
 }
 
 export async function findMilestone(id, q = db) {
   const r = await q('milestones').where({ id }).first();
-  return r ? toMilestone(r) : null;
+  return r ? (await withTeams([r], q))[0] : null;
+}
+
+/**
+ * Replace a milestone's team. Members not yet on the project team join it (0 hours allocated).
+ */
+export async function setMilestoneTeam(q, projectId, milestoneId, memberIds) {
+  const ids = [...new Set(memberIds)];
+  if (ids.length) {
+    const known = await q('members').whereIn('id', ids).pluck('id');
+    const bad = ids.filter((x) => !known.includes(x));
+    if (bad.length) throw unprocessable(`Unknown team member: ${bad.join(', ')}`);
+    const onTeam = await q('project_members').where({ project_id: projectId }).pluck('member_id');
+    const join = ids.filter((x) => !onTeam.includes(x));
+    if (join.length) {
+      const { max } = await q('project_members').where({ project_id: projectId }).max('position as max').first();
+      await q('project_members').insert(join.map((mid, i) => ({ project_id: projectId, member_id: mid, alloc_hours: 0, position: (max ?? -1) + 1 + i })));
+    }
+  }
+  await q('milestone_members').where({ milestone_id: milestoneId }).del();
+  if (ids.length) await q('milestone_members').insert(ids.map((mid) => ({ milestone_id: milestoneId, member_id: mid })));
 }
 
 export async function findMembers(q = db) {

@@ -121,3 +121,24 @@ describe('project hours budget', () => {
     expect(Number((await db('projects').where({ id: 'PR-101' }).first()).budget_hours)).toBe(272);
   });
 });
+
+describe('milestone team', () => {
+  test('set on create, add and edit; outsiders join the project team', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({
+      ...base, team: ['km'], milestones: [{ name: 'API', dueDate: '2026-11-20', allocHours: 10, team: ['km'] }, { name: 'UI', dueDate: '2026-12-20', allocHours: 10 }],
+    })).body.data;
+    expect(p.milestones.map((m) => m.team)).toEqual([['km'], []]);
+
+    const upd = await pm.patch(`${API}/milestones/${p.milestones[1].id}`).send({ team: ['vg', 'km'] });
+    expect(upd.status).toBe(200);
+    expect(upd.body.data.team.sort()).toEqual(['km', 'vg']);
+    const proj = (await pm.get(`${API}/projects/${p.id}`)).body.data;
+    expect(proj.team.map((t) => t.memberId)).toContain('vg'); // joined the project team
+
+    const add = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'QA', dueDate: '2026-12-25', team: ['dn'] });
+    expect(add.body.data.team).toEqual(['dn']);
+    expect((await pm.patch(`${API}/milestones/${p.milestones[1].id}`).send({ team: ['nobody'] })).status).toBe(422);
+    expect((await pm.patch(`${API}/milestones/${p.milestones[1].id}`).send({ team: [] })).body.data.team).toEqual([]);
+  });
+});

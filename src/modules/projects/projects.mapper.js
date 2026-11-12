@@ -26,7 +26,7 @@ export function toProject(r, team = [], links = []) {
   };
 }
 
-export function toMilestone(r) {
+export function toMilestone(r, team = []) {
   return {
     id: r.id,
     projectId: r.project_id,
@@ -36,6 +36,7 @@ export function toMilestone(r) {
     dueDate: r.due_date,
     status: r.status,
     crId: r.cr_id || null,
+    team, // member ids working on this milestone
     approval: r.approval_status
       ? { status: r.approval_status, askedAt: iso(r.approval_asked_at), at: iso(r.approval_at), note: r.approval_note || '' }
       : null,

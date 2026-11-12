@@ -218,11 +218,12 @@ export async function create(user, b) {
     });
     await trx('project_members').insert(team.map((mid, i) => ({ project_id: pid, member_id: mid, alloc_hours: each, position: i })));
     const ms = custom
-      ? b.milestones.map((m, i) => ({ n: i + 1, name: m.name.trim() || `Milestone ${i + 1}`, allocHours: +m.allocHours || 0, dueDate: m.dueDate }))
+      ? b.milestones.map((m, i) => ({ n: i + 1, name: m.name.trim() || `Milestone ${i + 1}`, allocHours: +m.allocHours || 0, dueDate: m.dueDate, team: m.team || [] }))
       : templateMilestones(budget, b.startDate, b.dueDate);
     await trx('milestones').insert(ms.map((m) => ({
       id: `${pid}-M${m.n}`, project_id: pid, n: m.n, name: m.name, alloc_hours: m.allocHours, due_date: m.dueDate, status: 'Not started',
     })));
+    for (const m of ms) if (m.team && m.team.length) await repo.setMilestoneTeam(trx, pid, `${pid}-M${m.n}`, m.team);
     const links = cleanLinks(b.links);
     if (links.length) await trx('project_links').insert(links.map((l) => ({ project_id: pid, ...l })));
     return pid;
@@ -304,6 +305,8 @@ export async function removeMember(user, id, memberId) {
     await pmProject(user, id, trx);
     const n = await trx('project_members').where({ project_id: id, member_id: memberId }).del();
     if (!n) throw notFound('Team member');
+    // Leaving the project also takes them off its milestones.
+    await trx('milestone_members').where({ member_id: memberId }).whereIn('milestone_id', trx('milestones').where({ project_id: id }).select('id')).del();
     return teamState(id, trx);
   });
 }
@@ -377,6 +380,7 @@ export async function addMilestone(user, pid, b) {
     while (ids.has(`${p.id}-M${k}`)) k += 1;
     const id = `${p.id}-M${k}`;
     await trx('milestones').insert({ id, project_id: p.id, n, name: b.name.trim() || `Milestone ${n}`, alloc_hours: Math.max(0, +b.allocHours || 0), due_date: b.dueDate, status: 'Not started' });
+    if (b.team && b.team.length) await repo.setMilestoneTeam(trx, p.id, id, b.team);
     return repo.findMilestone(id, trx);
   });
 }
@@ -416,7 +420,8 @@ export async function updateMilestone(user, mid, b) {
     if (b.allocHours !== undefined) row.alloc_hours = Math.max(0, +b.allocHours || 0);
     if (b.status !== undefined) row.status = b.status;
     if (b.dueDate !== undefined) row.due_date = b.dueDate;
-    await trx('milestones').where({ id: mid }).update(row);
+    if (Object.keys(row).length) await trx('milestones').where({ id: mid }).update(row);
+    if (b.team !== undefined) await repo.setMilestoneTeam(trx, p.id, mid, b.team);
     return repo.findMilestone(mid, trx);
   });
 }
