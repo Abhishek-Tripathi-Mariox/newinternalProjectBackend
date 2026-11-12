@@ -1,0 +1,40 @@
+# Local services for development and tests: `npm run db:up` (Postgres) / `npm run storage:up` (MinIO).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mariox-portal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mariox
+      POSTGRES_PASSWORD: mariox_dev_password
+      POSTGRES_DB: mariox_portal
+    ports:
+      - "5433:5432"
+    volumes:
+      - mariox_pg_data:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mariox -d mariox_portal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible object storage for local development (production uses AWS S3).
+  # API on :9000, web console on http://localhost:9001 (user / password below).
+  storage:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    container_name: mariox-portal-s3
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: mariox
+      MINIO_ROOT_PASSWORD: mariox_dev_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - mariox_s3_data:/data
+
+volumes:
+  mariox_pg_data:
+  mariox_s3_data:
