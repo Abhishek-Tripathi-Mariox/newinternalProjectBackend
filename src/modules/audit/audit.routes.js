@@ -8,7 +8,7 @@ import * as svc from './audit.service.js';
 const router = Router();
 
 const listQuery = z.object({
-  kind: z.enum(['Invite', 'Role', 'Access', 'Profile']).optional(),
+  kind: z.enum(['Invite', 'Role', 'Access', 'Profile', 'Credentials']).optional(),
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });

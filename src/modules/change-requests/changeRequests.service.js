@@ -16,6 +16,7 @@ import { crMoney, crRate, money } from '../projects/projects.domain.js';
 import { dn, ds, todayN } from '../projects/dates.js';
 import { toCr, toTasks } from './changeRequests.mapper.js';
 import { printCrHtml } from './print.js';
+import { emailCrToClient, clientMailNote } from '../projects/clientEmails.js';
 import { documentsService } from '../documents/documents.service.js';
 
 const LOCKED_MSG = 'This change request is approved — only its documents can change.';
@@ -186,11 +187,23 @@ export async function create(user, b) {
     await h.flush();
     return crId;
   });
-  return detail(user, id);
+  const dto = await detail(user, id);
+  return b.send ? withClientEmail(dto) : dto;
 }
 
-/** saveCr (edit). Once past "Sent to client" the CR is locked — only documents can change. */
+/** After a CR is sent to the client: email them (when CLIENT_EMAILS=true) and report it on the DTO. */
+async function withClientEmail(dto, message) {
+  const clientEmail = await emailCrToClient(dto);
+  return { ...dto, clientEmail, ...(message !== undefined ? { message: message + clientMailNote(clientEmail) } : {}) };
+}
+
+/**
+ * saveCr (edit). Draft and "Sent to client" CRs can be edited; `send` sends a draft, or re-sends an
+ * already-sent CR after edits (client emailed again when CLIENT_EMAILS=true). Once approved / rejected
+ * the CR is locked — only documents can change.
+ */
 export async function update(user, id, b) {
+  let sentNow = false;
   await db.transaction(async (trx) => {
     const { c } = await pmCr(user, id, trx);
     const locked = !['Draft', 'Sent to client'].includes(c.status);
@@ -207,11 +220,17 @@ export async function update(user, id, b) {
     if (send && c.status === 'Draft') {
       Object.assign(row, { status: 'Sent to client', sent_at: new Date() });
       h.add('Sent to client for approval');
+      sentNow = true;
+    } else if (send && c.status === 'Sent to client') {
+      row.sent_at = new Date();
+      h.add('Updated and re-sent to client');
+      sentNow = true;
     }
     await trx('change_requests').where({ id }).update(row);
     await h.flush();
   });
-  return detail(user, id);
+  const dto = await detail(user, id);
+  return sentNow ? withClientEmail(dto) : dto;
 }
 
 export async function remove(user, id) {
@@ -346,5 +365,6 @@ export async function act(user, id, { act: action, note, signer }) {
     const { c, p } = await pmCr(user, id, trx);
     return applyDecision(trx, c, p, action, { note, signer, via: 'pm' });
   });
-  return { ...(await detail(user, id)), message };
+  const dto = await detail(user, id);
+  return action === 'send' ? withClientEmail(dto, message) : { ...dto, message };
 }

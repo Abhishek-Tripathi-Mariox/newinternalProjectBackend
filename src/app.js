@@ -18,12 +18,14 @@ export function createApp() {
   app.set('trust proxy', 1); // correct client IPs for rate limiting behind one proxy / load balancer
 
   app.use(requestId);
+  // Server clock on every response: the frontend uses it instead of the browser's clock (see frontend src/lib/clock.js).
+  app.use((_req, res, next) => { res.setHeader('X-Server-Time', String(Date.now())); next(); });
   app.use(httpLogger);
   app.use(helmet());
   app.use(cors({
     origin: (origin, cb) => cb(null, !origin || config.corsOrigins.includes(origin)),
     credentials: true, // refresh-token cookie
-    exposedHeaders: ['X-Request-Id'],
+    exposedHeaders: ['X-Request-Id', 'X-Server-Time', 'Content-Disposition'],
   }));
   app.use(compression());
   app.use(express.json({ limit: '1mb' }));

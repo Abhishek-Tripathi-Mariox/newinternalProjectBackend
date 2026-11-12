@@ -148,7 +148,7 @@ describe('delivery day: check-in → timer → break → resume → end shift', 
   test('end-shift validation (frontend wording)', async () => {
     let r = await dev.post(`${W}/end-shift`).send({ rows: [{ p: 'PR-101', h: '' }], done: 'x' });
     expect(r.status).toBe(422);
-    expect(r.body.error.message).toBe('Add hours for at least one project.');
+    expect(r.body.error.message).toBe('Add hours for at least one project or internal work.');
     r = await dev.post(`${W}/end-shift`).send({ rows: [{ p: 'PR-101', h: 20 }], done: 'x' });
     expect(r.status).toBe(422);
     expect(r.body.error.message).toMatch(/^Logged 20h but you worked (\d+h )?\d+m\. Reduce hours to match time worked\.$/);
@@ -177,6 +177,29 @@ describe('delivery day: check-in → timer → break → resume → end shift', 
     expect(me.timer).toBeNull();
     expect(me.events.at(-1).kind).toBe('logout');
     expect(await db('activity_feed').where({ person_id: 'vg', kind: 'out', text: 'Checked out' })).toHaveLength(1);
+  });
+
+  test('end-shift with internal (non-project) work', async () => {
+    const dev2 = await as('dev2@test.io');
+    await dev2.post(`${W}/check-in`);
+    await backdateDay('si', 3 * 3600e3); // worked ~3h
+    let r = await dev2.post(`${W}/end-shift`).send({ internalRows: [{ cat: 'Meeting', h: 1, note: ' ' }], done: 'x' });
+    expect(r.body.error.message).toBe('Describe the internal work you did (row 1).');
+    r = await dev2.post(`${W}/end-shift`).send({
+      rows: [{ p: 'PR-101', h: 2 }], internalRows: [{ cat: 'Learning', h: 1.5, note: 'Course' }], done: 'x',
+    });
+    expect(r.body.error.message).toMatch(/^Logged 3\.5h but you worked/);
+
+    r = await dev2.post(`${W}/end-shift`).send({
+      internalRows: [{ cat: 'Meeting', h: 1, note: 'Sprint planning' }, { cat: 'Learning', h: 0.5, note: 'React 19 docs' }, { cat: 'Other', h: '', note: '' }],
+      done: 'Planning + learning',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.data.report.internal).toEqual([{ cat: 'Meeting', h: 1, note: 'Sprint planning' }, { cat: 'Learning', h: 0.5, note: 'React 19 docs' }]);
+    expect(await db('time_logs').where({ member_id: 'si', day: ymd(Date.now()) })).toHaveLength(0); // internal hours are not project logs
+    const ceo = await as('ceo@test.io');
+    const reps = (await ceo.get('/api/v1/shift-reports')).body.data.filter((x) => x.who === 'si');
+    expect(reps.at(-1).internal).toHaveLength(2);
   });
 
   test('check-out resumes an open break first', async () => {

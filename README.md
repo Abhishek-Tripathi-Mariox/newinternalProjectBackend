@@ -77,6 +77,7 @@ Timestamps are ISO 8601, calendar days `YYYY-MM-DD`, money in INR.
 | Leads | `GET/POST /leads`, `GET/PATCH/DELETE /leads/:id`, `PATCH /leads/:id/{status,owner}`, `POST /leads/:id/activities`, `POST /leads/bulk`, `POST /leads/merge`, `GET /leads/duplicates`, `GET /leads/export.csv`, `POST /leads/:id/documents` |
 | Quotes | `GET/POST /leads/:id/quotes`, `PATCH /leads/:id/quotes/:qid`, `POST …/:qid/send`, `POST …/:qid/status`, `GET …/:qid/print` |
 | Follow-ups | `GET/POST /follow-ups`, `GET/PATCH/DELETE /follow-ups/:id`, `PATCH /follow-ups/:id/toggle-done`, `GET /follow-ups/due-reminders`, `POST /follow-ups/due-reminders/ack` |
+| Project follow-ups | `GET/POST /project-follow-ups` (`?tab=today, upcoming, overdue, completed or all; projectId, owner, type, priority, q`), `GET/PATCH/DELETE /project-follow-ups/:id`, `PATCH /project-follow-ups/:id/toggle-done` — anyone who can see the project; delete = creator, owner or PM; never clients |
 | Dashboard | `GET /dashboard/sales?period=7\|30\|90\|ytd\|custom&from=&to=&owner=` |
 | Documents | `GET /documents/:id/download`, `PATCH /documents/:id`, `DELETE /documents/:id` (multipart uploads: field `files`, max 10 × 10 MB) |
 | Projects | `GET/POST /projects`, `GET /projects/overview`, `GET /projects/capacity`, `GET/PATCH /projects/:id`, `GET /projects/:id/milestones`, `POST /projects/:id/members`, `PUT/DELETE /projects/:id/members/:memberId`, `PUT /projects/:id/links`, `POST /projects/:id/portal`, `POST /projects/:id/documents` |
@@ -113,6 +114,13 @@ When an email is sent, the API response has `emailSent: true` and **no** token (
 configured or sending fails, the response has `emailSent: false` plus the token, and the UI shows the link for the admin to
 share. The SMTP login is checked on startup (logged, never blocks the API). Code: `src/core/mailer.js`,
 `src/modules/users/users.emails.js`. Tests never send mail (`tests/email.test.js` uses an in-memory transport).
+
+**Client emails (`CLIENT_EMAILS`, default `false`).** With `CLIENT_EMAILS=true` the project's client (the *Client email*
+field on the project) is emailed when a change request is sent for approval (*Send to client*, on create, edit or the
+`send` action) and when a milestone is sent for review (*ask approval*). The email's reply-to is the PM, who then records
+the client's decision. With `false` nothing goes to clients — statuses change exactly as before. A missing client email or a
+failed send never blocks the action; the response carries `clientEmail: {sent, to?, reason?}` and the PM's message says
+what happened. Code: `src/modules/projects/clientEmails.js`; tests: `tests/client-emails.test.js`.
 
 ### File storage (S3)
 

@@ -227,7 +227,7 @@ describe('GET /shift-reports', () => {
     const vg = res.body.data.find((r) => r.who === 'vg');
     expect(vg).toEqual({
       id: expect.stringMatching(/^R\d+$/), who: 'vg', d: YDAY, t: expect.any(String), sales: false, done: 'Screens', blockers: '', plan: 'More screens',
-      outcome: '', calls: 0, meetings: 0, rows: [{ p: 'PR-101', ms: 'PR-101-M2', h: 6, note: '' }], pm: [],
+      outcome: '', calls: 0, meetings: 0, rows: [{ p: 'PR-101', ms: 'PR-101-M2', h: 6, note: '' }], pm: [], internal: [],
     });
     expect(res.body.data.find((r) => r.who === 'ak')).toMatchObject({ sales: true, outcome: 'Good day', calls: 5, meetings: 1 });
     expect((await (await as('ceo@test.io')).get(`${API}/shift-reports?person=km`)).body.data.map((r) => r.who)).toEqual(['km']);

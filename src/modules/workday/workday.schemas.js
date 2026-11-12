@@ -24,6 +24,11 @@ export const endShiftSchema = z.object({
     h: hours,
     note: text(1000),
   })).max(50).optional().default([]),
+  internalRows: z.array(z.object({
+    cat: z.string().trim().max(60).optional().default('Other'),
+    h: hours,
+    note: text(1000),
+  })).max(20).optional().default([]),
   pmRows: z.array(z.object({
     p: z.string().min(1).max(40),
     st: z.enum(['On track', 'At risk', 'Blocked']).default('On track'),

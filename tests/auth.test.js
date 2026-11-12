@@ -171,3 +171,11 @@ describe('invite → accept-invite, reset password', () => {
     expect((await login('qa@test.io', 'qa-newpass1')).status).toBe(200);
   });
 });
+
+test('every response carries the server clock (X-Server-Time, ms)', async () => {
+  const before = Date.now();
+  const res = await request(app).post('/api/v1/auth/refresh');
+  const t = Number(res.headers['x-server-time']);
+  expect(t).toBeGreaterThanOrEqual(before);
+  expect(t).toBeLessThanOrEqual(Date.now());
+});

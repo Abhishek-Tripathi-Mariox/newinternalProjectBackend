@@ -267,10 +267,14 @@ export async function submitEndShift(user, m) {
     const sales = await isSalesPerson(q, pid);
     let rows = [];
     let ms = [];
+    let internal = [];
     if (!sales) {
       rows = (m.rows || []).filter((r) => r.p && +r.h > 0);
-      if (!rows.length) throw unprocessable('Add hours for at least one project.');
-      const lt = rows.reduce((x, r) => x + +r.h, 0);
+      internal = (m.internalRows || []).filter((r) => +r.h > 0);
+      if (!rows.length && !internal.length) throw unprocessable('Add hours for at least one project or internal work.');
+      const blank = internal.findIndex((r) => !(r.note || '').trim());
+      if (blank >= 0) throw unprocessable(`Describe the internal work you did (row ${blank + 1}).`);
+      const lt = rows.reduce((x, r) => x + +r.h, 0) + internal.reduce((x, r) => x + +r.h, 0);
       const wh = st.s.work / HOUR;
       if (lt > wh + 0.01) throw unprocessable(`Logged ${Math.round(lt * 100) / 100}h but you worked ${fmtDur(wh * HOUR)}. Reduce hours to match time worked.`);
       if (!m.done.trim()) throw unprocessable('Write what you completed today.');
@@ -287,6 +291,7 @@ export async function submitEndShift(user, m) {
       return { p: r.p, ms: msOk(r) ? r.ms : curMs(ms, r.p), h, note: (r.note || '').trim() };
     });
     const pmRows = (m.pmRows || []).map((x) => ({ p: x.p, st: x.st, note: (x.note || '').trim() }));
+    const internalRows = internal.map((r) => ({ cat: (r.cat || 'Other').trim() || 'Other', h: Math.round(+r.h * 100) / 100, note: (r.note || '').trim() }));
 
     // Check out first (ends a break, stops & logs the timer) — then today's logs are replaced.
     const t = now;
@@ -304,12 +309,12 @@ export async function submitEndShift(user, m) {
     }
     await repo.upsertReport(q, {
       person_id: pid, day, is_sales: sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(),
-      calls: +m.calls || 0, meetings: +m.meetings || 0, rows: JSON.stringify(repRows), pm_rows: JSON.stringify(pmRows), submitted_at: new Date(now),
+      calls: +m.calls || 0, meetings: +m.meetings || 0, rows: JSON.stringify(repRows), pm_rows: JSON.stringify(pmRows), internal_rows: JSON.stringify(internalRows), submitted_at: new Date(now),
     });
     await repo.touchPresence(q, pid, now);
     return {
       message: 'Report submitted · shift ended',
-      report: { who: pid, day, sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(), calls: +m.calls || 0, meetings: +m.meetings || 0, rows: repRows, pmRows },
+      report: { who: pid, day, sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(), calls: +m.calls || 0, meetings: +m.meetings || 0, rows: repRows, pmRows, internal: internalRows },
     };
   });
 }

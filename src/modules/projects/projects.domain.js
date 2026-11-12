@@ -13,7 +13,7 @@ export const TEAMS = ['Web', 'Mobile', 'Backend', 'Design', 'QA', 'PMO'];
 export const TEAM_COST = { Web: 700, Mobile: 750, Backend: 750, Design: 650, QA: 550, PMO: 900 };
 export const MILESTONE_TEMPLATE = {
   fractions: [0.15, 0.3, 0.3, 0.15, 0.1],
-  names: ['Discovery & UI/UX', 'Development · Phase 1', 'Development · Phase 2', 'QA & UAT', 'Launch & handover'],
+  names: ['Feature List', 'UI/UX Milestone 1', 'Frontend Milestone 2', 'Backend Milestone 3', 'QA, Third Party, Go Live - Milestone 4'],
 };
 export const LINK_TYPES = ['Figma', 'Prototype', 'Google Drive', 'Repository', 'Staging URL', 'Live URL', 'Jira / tracker', 'Other'];
 /** Link types shown to the client in the portal. */

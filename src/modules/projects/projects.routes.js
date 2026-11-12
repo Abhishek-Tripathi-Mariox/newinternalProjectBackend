@@ -14,6 +14,7 @@ r.post('/', authorize('projects', 'c'), validate({ body: s.createProjectSchema }
 r.get('/:id', authorize('projects', 'v'), validate({ params: s.projectParams, query: s.detailQuery }), ctrl.detail);
 r.patch('/:id', authorize('projects', 'e'), validate({ params: s.projectParams, body: s.updateProjectSchema }), ctrl.update);
 r.get('/:id/milestones', authorize('projects', 'v'), validate({ params: s.projectParams }), ctrl.milestones);
+r.post('/:id/milestones', authorize('projects', 'e'), validate({ params: s.projectParams, body: s.milestoneInput }), ctrl.addMilestone);
 r.post('/:id/members', authorize('projects', 'e'), validate({ params: s.projectParams, body: s.addMemberSchema }), ctrl.addMember);
 r.put('/:id/members/:memberId', authorize('projects', 'e'), validate({ params: s.memberParams, body: s.allocSchema }), ctrl.setAlloc);
 r.delete('/:id/members/:memberId', authorize('projects', 'e'), validate({ params: s.memberParams }), ctrl.removeMember);

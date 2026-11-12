@@ -11,7 +11,7 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
-  DATABASE_URL: z.string().min(1),
+  DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\/[^/]+\/\w/, 'must look like postgres://user:password@localhost:5432/dbname'),
   TEST_DATABASE_URL: z.string().optional(),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
@@ -22,6 +22,10 @@ const schema = z.object({
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
   APP_TZ: z.string().default('Asia/Kolkata'),
+  // Encrypts third-party credentials stored on projects (AES-256-GCM). 32 random bytes, base64:
+  //   openssl rand -base64 32      — keep it safe and never change it (stored creds can't be read without it).
+  CREDENTIALS_KEY: z.string().optional()
+    .refine((v) => !v || Buffer.from(v, 'base64').length === 32, 'CREDENTIALS_KEY must be 32 bytes, base64 (openssl rand -base64 32)'),
   // ---- File storage: 's3' (AWS S3 or any S3-compatible store) or 'local' (disk; tests / quick local runs)
   STORAGE_DRIVER: z.enum(['s3', 'local']).default('s3'),
   S3_BUCKET: z.string().optional(),
@@ -45,6 +49,7 @@ const schema = z.object({
   SMTP_PASS: z.string().optional(),
   FROM_EMAIL: z.string().email().optional(), // defaults to SMTP_USER
   FROM_NAME: z.string().default('Mariox Software'),
+  CLIENT_EMAILS: z.enum(['true', 'false']).default('false'), // true = email clients (CR sent for approval, milestone review)
   APP_URL: z.string().url().optional(), // frontend base URL used in email links; defaults to the first CORS origin
   // Refresh cookie 'Secure' flag (HTTPS only). Defaults to true in production; set false only while running on plain HTTP (e.g. by IP).
   COOKIE_SECURE: z.enum(['true', 'false']).optional(),
@@ -124,8 +129,11 @@ export const config = Object.freeze({
     secure: env.SMTP_SECURE ? env.SMTP_SECURE === 'true' : env.SMTP_PORT === 465,
     user: env.SMTP_USER,
     pass: env.SMTP_PASS,
+    clientEmails: env.CLIENT_EMAILS === 'true',
     from: { name: env.FROM_NAME, address: env.FROM_EMAIL || env.SMTP_USER || 'no-reply@localhost' },
   },
+  // Tests get a fixed throwaway key; elsewhere credentials are disabled until CREDENTIALS_KEY is set.
+  credentialsKey: env.CREDENTIALS_KEY ? Buffer.from(env.CREDENTIALS_KEY, 'base64') : env.NODE_ENV === 'test' ? Buffer.alloc(32, 7) : null,
   cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
   appUrl: (env.APP_URL || env.CORS_ORIGINS.split(',')[0].trim()).replace(/\/+$/, ''),
   logLevel: env.NODE_ENV === 'test' ? (process.env.TEST_LOG_LEVEL || 'silent') : env.LOG_LEVEL,

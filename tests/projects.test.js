@@ -109,11 +109,11 @@ describe('POST /projects (saveProj)', () => {
     expect(p.id).toBe('PR-103');
     expect(p.team.map((t) => [t.memberId, t.allocHours])).toEqual([['mj', 200], ['km', 200]]);
     expect(p.milestones.map((m) => [m.name, m.allocHours, m.dueDate])).toEqual([
-      ['Discovery & UI/UX', 60, '2026-01-16'],
-      ['Development · Phase 1', 120, '2026-02-15'],
-      ['Development · Phase 2', 120, '2026-03-17'],
-      ['QA & UAT', 60, '2026-04-01'],
-      ['Launch & handover', 40, '2026-04-11'],
+      ['Feature List', 60, '2026-01-16'],
+      ['UI/UX Milestone 1', 120, '2026-02-15'],
+      ['Frontend Milestone 2', 120, '2026-03-17'],
+      ['Backend Milestone 3', 60, '2026-04-01'],
+      ['QA, Third Party, Go Live - Milestone 4', 40, '2026-04-11'],
     ]);
     expect(p.links).toEqual([expect.objectContaining({ type: 'Figma', url: 'https://figma.com/x' })]);
     expect(p.health.label).toBe('Not started');

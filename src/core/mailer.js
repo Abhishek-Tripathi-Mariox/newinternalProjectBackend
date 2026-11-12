@@ -34,11 +34,11 @@ export function useTestTransport({ fail = false } = {}) {
 export const mailEnabled = () => !!transport;
 
 /** Send one email. Returns true when the SMTP server accepted it; never throws (failures are logged). */
-export async function sendMail({ to, subject, text, html }) {
+export async function sendMail({ to, subject, text, html, replyTo }) {
   if (!transport) return false;
   try {
-    const info = await transport.sendMail({ from: config.mail.from, to, subject, text, html });
-    if (config.isTest) sentMail.push({ to, subject, text, html });
+    const info = await transport.sendMail({ from: config.mail.from, to, subject, text, html, ...(replyTo ? { replyTo } : {}) });
+    if (config.isTest) sentMail.push({ to, subject, text, html, replyTo });
     logger.info({ to, subject, messageId: info.messageId }, 'Email sent');
     return true;
   } catch (err) {

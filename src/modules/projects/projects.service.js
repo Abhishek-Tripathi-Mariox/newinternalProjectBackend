@@ -16,6 +16,7 @@ import { attachDocuments } from './documents.js';
 import { documentsService } from '../documents/documents.service.js';
 import { buildModel, projectSummary, overview as overviewOf, capacity as capacityOf, templateMilestones, hh, LINK_OK } from './projects.domain.js';
 import { dn } from './dates.js';
+import { emailMilestoneToClient, clientMailNote } from './clientEmails.js';
 
 /* ───────────── Access helpers (shared with milestones, change requests, portal) ───────────── */
 
@@ -185,7 +186,7 @@ async function assertMembers(ids, q) {
   if (missing.length) throw unprocessable(`Unknown team member: ${missing.join(', ')}`);
 }
 
-/** saveProj: validation, team allocation split, 5 template milestones. */
+/** saveProj: validation, team allocation split, milestones (as typed in the form, or the 5 template ones). */
 export async function create(user, b) {
   if (!b.name.trim() || !b.client.trim()) throw unprocessable('Project name and client are required.');
   const services = (b.services || (b.service ? [b.service] : [])).map((s) => s.trim()).filter(Boolean);
@@ -196,7 +197,9 @@ export async function create(user, b) {
   const err = linkError(b.links);
   if (err) throw unprocessable(err);
 
-  const budget = Math.max(0, +b.budgetHours || 0);
+  const custom = Array.isArray(b.milestones) && b.milestones.length > 0;
+  if (custom && b.milestones.some((m) => m.dueDate < b.startDate)) throw unprocessable('Milestone due dates can’t be before the project start date.');
+  const budget = custom ? b.milestones.reduce((x, m) => x + (+m.allocHours || 0), 0) : Math.max(0, +b.budgetHours || 0);
   const team = Array.from(new Set([pm].concat(b.team.filter((x) => x !== pm))));
   const each = Math.round(budget / team.length / 5) * 5;
 
@@ -206,9 +209,13 @@ export async function create(user, b) {
     await trx('projects').insert({
       id: pid, name: b.name.trim(), client: b.client.trim(), services, status: b.status, pm_member_id: pm, start_date: b.startDate, due_date: b.dueDate,
       value: +b.value || 0, hue: Math.floor(Math.random() * 360), priority: b.priority || 'Medium', brief: (b.brief || '').trim(),
+      client_email: (b.clientEmail || '').trim().toLowerCase() || null,
     });
     await trx('project_members').insert(team.map((mid, i) => ({ project_id: pid, member_id: mid, alloc_hours: each, position: i })));
-    await trx('milestones').insert(templateMilestones(budget, b.startDate, b.dueDate).map((m) => ({
+    const ms = custom
+      ? b.milestones.map((m, i) => ({ n: i + 1, name: m.name.trim() || `Milestone ${i + 1}`, allocHours: +m.allocHours || 0, dueDate: m.dueDate }))
+      : templateMilestones(budget, b.startDate, b.dueDate);
+    await trx('milestones').insert(ms.map((m) => ({
       id: `${pid}-M${m.n}`, project_id: pid, n: m.n, name: m.name, alloc_hours: m.allocHours, due_date: m.dueDate, status: 'Not started',
     })));
     const links = cleanLinks(b.links);
@@ -218,7 +225,7 @@ export async function create(user, b) {
   return detail(user, id);
 }
 
-const PATCH_COLS = { name: 'name', client: 'client', services: 'services', status: 'status', pmId: 'pm_member_id', startDate: 'start_date', dueDate: 'due_date', value: 'value', priority: 'priority', brief: 'brief' };
+const PATCH_COLS = { name: 'name', client: 'client', services: 'services', status: 'status', pmId: 'pm_member_id', startDate: 'start_date', dueDate: 'due_date', value: 'value', priority: 'priority', brief: 'brief', clientEmail: 'client_email' };
 
 /** updProj (PM only). A new PM joins the team (first position) if not on it yet. */
 export async function update(user, id, b) {
@@ -229,6 +236,7 @@ export async function update(user, id, b) {
     if (due < start) throw unprocessable('Pick a start date and a due date after it.');
     const row = {};
     for (const [k, col] of Object.entries(PATCH_COLS)) if (b[k] !== undefined) row[col] = typeof b[k] === 'string' ? b[k].trim() : b[k];
+    if (row.client_email === '') row.client_email = null;
     if (b.pmId && b.pmId !== p.pmId) {
       await assertMembers([b.pmId], trx);
       if (!p.team.some((t) => t.memberId === b.pmId)) {
@@ -331,6 +339,45 @@ async function pmMilestone(user, mid, q) {
   return { m, p };
 }
 
+/** addMilestone (PM only): appended after the last one. */
+export async function addMilestone(user, pid, b) {
+  return db.transaction(async (trx) => {
+    const p = await pmProject(user, pid, trx);
+    await repo.lockProject(trx, p.id);
+    if (b.dueDate < p.startDate) throw unprocessable('The due date can’t be before the project start date.');
+    const rows = await trx('milestones').where({ project_id: p.id }).select('id', 'n');
+    const n = rows.reduce((x, r) => Math.max(x, r.n), 0) + 1;
+    const ids = new Set(rows.map((r) => r.id));
+    let k = n;
+    while (ids.has(`${p.id}-M${k}`)) k += 1;
+    const id = `${p.id}-M${k}`;
+    await trx('milestones').insert({ id, project_id: p.id, n, name: b.name.trim() || `Milestone ${n}`, alloc_hours: Math.max(0, +b.allocHours || 0), due_date: b.dueDate, status: 'Not started' });
+    return repo.findMilestone(id, trx);
+  });
+}
+
+/**
+ * deleteMilestone (PM only). Not allowed once hours are logged on it, or for a change-request milestone.
+ * Its tasks / bugs stay on the project (milestone cleared); the rest are renumbered 1..n.
+ */
+export async function deleteMilestone(user, mid) {
+  return db.transaction(async (trx) => {
+    const { m, p } = await pmMilestone(user, mid, trx);
+    await repo.lockProject(trx, p.id);
+    if (m.crId) throw unprocessable('This milestone belongs to a change request and can’t be deleted.');
+    const logged = await trx('time_logs').where({ milestone_id: mid }).first('id');
+    if (logged) throw unprocessable('Hours are logged on this milestone, so it can’t be deleted. Rename it or set its hours to 0 instead.');
+    await trx('change_requests').where({ milestone_id: mid }).update({ milestone_id: null });
+    await trx('change_requests').where({ project_id: p.id, target: mid }).update({ target: 'new' }); // CRs not yet approved
+    await trx('milestones').where({ id: mid }).del();
+    const rest = await trx('milestones').where({ project_id: p.id }).orderBy('n').select('id', 'n');
+    // Two passes so the (project_id, n) unique constraint never clashes mid-way.
+    for (const r of rest) await trx('milestones').where({ id: r.id }).update({ n: r.n + 10000 });
+    for (const [i, r] of rest.entries()) await trx('milestones').where({ id: r.id }).update({ n: i + 1 });
+    return { id: mid, deleted: true, milestones: await repo.findMilestones([p.id], trx) };
+  });
+}
+
 /** updMs (PM only). A blank name falls back to "Milestone n". */
 export async function updateMilestone(user, mid, b) {
   return db.transaction(async (trx) => {
@@ -347,7 +394,7 @@ export async function updateMilestone(user, mid, b) {
 
 /** askApproval (PM only): portal must be on; milestone goes In review with approval Pending. */
 export async function askApproval(user, mid) {
-  return db.transaction(async (trx) => {
+  const out = await db.transaction(async (trx) => {
     const { m, p } = await pmMilestone(user, mid, trx);
     if (!p.portal.on) throw unprocessable('Turn on the client portal first.');
     if (m.status === 'Done') throw unprocessable('This milestone is already done.');
@@ -355,4 +402,6 @@ export async function askApproval(user, mid) {
     await trx('milestones').where({ id: mid }).update({ status: 'In review', approval_status: 'Pending', approval_asked_at: trx.fn.now(), approval_at: null, approval_note: null });
     return { ...(await repo.findMilestone(mid, trx)), message: 'Sent to the client for approval' };
   });
+  const clientEmail = await emailMilestoneToClient(out);
+  return { ...out, clientEmail, message: out.message + clientMailNote(clientEmail) };
 }

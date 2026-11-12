@@ -7,6 +7,7 @@ export function toProject(r, team = [], links = []) {
     id: r.id,
     name: r.name,
     client: r.client,
+    clientEmail: r.client_email || '',
     services: r.services || [],
     status: r.status,
     pmId: r.pm_member_id,

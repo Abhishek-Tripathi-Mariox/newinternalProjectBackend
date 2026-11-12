@@ -5,6 +5,7 @@
 const SEQ = {
   lead: ['lead_code_seq', (n) => `MX-${n}`],
   followUp: ['follow_up_code_seq', (n) => `F${n}`],
+  projectFollowUp: ['project_follow_up_code_seq', (n) => `PF${n}`],
   project: ['project_code_seq', (n) => `PR-${n}`],
   task: ['task_code_seq', (n) => `T${n}`],
   bug: ['bug_code_seq', (n) => `BUG-${n}`],

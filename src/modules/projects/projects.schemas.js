@@ -11,6 +11,7 @@ const optDay = z.union([day, z.literal('')]).optional();
 const priority = z.enum(['High', 'Medium', 'Low']);
 const hours = z.coerce.number().min(0).max(100000);
 const memberId = z.string().regex(MEMBER_ID);
+const clientEmail = z.union([z.string().trim().toLowerCase().email('Enter a valid client email').max(200), z.literal('')]);
 const link = z.object({ type: z.string().trim().min(1).max(40).default('Other'), url: z.string().max(2000).default('') });
 
 export const projectParams = z.object({ id: z.string().regex(PROJECT_ID, 'Invalid project id') });
@@ -42,6 +43,13 @@ export const overviewQuery = z.object(filters);
 export const capacityQuery = z.object({ ...filters, week: z.coerce.number().int().min(0).max(2).default(0) });
 export const detailQuery = z.object({ day: day.optional(), period: z.enum(PERIODS).default('week'), from: optDay, to: optDay });
 
+/** One milestone typed in the new-project form / added from the drawer. */
+export const milestoneInput = z.object({
+  name: z.string().trim().max(200).default(''),
+  dueDate: day,
+  allocHours: hours.default(0),
+});
+
 export const createProjectSchema = z.object({
   name: z.string().max(200).default(''),
   client: z.string().max(200).default(''),
@@ -56,7 +64,9 @@ export const createProjectSchema = z.object({
   value: z.coerce.number().min(0).max(1e12).default(0),
   priority: priority.default('Medium'),
   brief: z.string().max(10000).default(''),
+  clientEmail: clientEmail.default(''),
   links: z.array(link).max(50).default([]),
+  milestones: z.array(milestoneInput).max(30).optional(), // omitted → the five template milestones
 });
 
 export const updateProjectSchema = z.object({
@@ -70,6 +80,7 @@ export const updateProjectSchema = z.object({
   value: z.coerce.number().min(0).max(1e12),
   priority,
   brief: z.string().max(10000),
+  clientEmail,
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 export const allocSchema = z.object({ allocHours: hours });

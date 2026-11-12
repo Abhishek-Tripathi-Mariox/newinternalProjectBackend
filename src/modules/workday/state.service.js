@@ -122,6 +122,7 @@ export async function shiftReports(pids, { from, to } = {}) {
     meetings: r.meetings,
     rows: (r.rows || []).map((x) => ({ p: x.p, ms: x.ms ?? null, h: Number(x.h) || 0, note: x.note || '' })),
     pm: (r.pm_rows || []).map((x) => ({ p: x.p, st: x.st, note: x.note || '' })),
+    internal: (r.internal_rows || []).map((x) => ({ cat: x.cat || 'Other', h: Number(x.h) || 0, note: x.note || '' })),
   }));
 }
 

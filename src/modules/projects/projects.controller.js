@@ -33,6 +33,8 @@ export const addDocuments = async (req, res) => {
   }
 };
 
+export const addMilestone = async (req, res) => created(res, await svc.addMilestone(req.user, req.valid.params.id, req.body));
+export const deleteMilestone = async (req, res) => ok(res, await svc.deleteMilestone(req.user, req.valid.params.id));
 export const updateMilestone = async (req, res) => ok(res, await svc.updateMilestone(req.user, req.valid.params.id, req.body));
 export const askApproval = async (req, res) => ok(res, await svc.askApproval(req.user, req.valid.params.id));
 

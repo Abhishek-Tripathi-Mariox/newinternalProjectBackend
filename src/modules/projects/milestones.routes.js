@@ -9,6 +9,7 @@ const r = Router();
 
 r.get('/', authorize('projects', 'v'), validate({ query: s.milestonesQuery }), ctrl.allMilestones);
 r.patch('/:id', authorize('projects', 'e'), validate({ params: s.milestoneParams, body: s.updateMilestoneSchema }), ctrl.updateMilestone);
+r.delete('/:id', authorize('projects', 'e'), validate({ params: s.milestoneParams }), ctrl.deleteMilestone);
 r.post('/:id/ask-approval', authorize('projects', 'e'), validate({ params: s.milestoneParams }), ctrl.askApproval);
 
 export default r;
