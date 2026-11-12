@@ -228,3 +228,19 @@ describe('/members and /sales-owners', () => {
     expect((await admin.patch(`${API}/members/vg`).send({ shiftHours: 30 })).status).toBe(422);
   });
 });
+
+describe('custom delivery roles', () => {
+  test('a custom role with task / timesheet access makes the person a delivery member', async () => {
+    await db('roles').insert({ id: 'r-dev', name: 'Developer', description: '', hue: 200, perms: JSON.stringify({ projects: { v: 1, scope: 'own' }, tasks: { v: 1, e: 1, scope: 'own' }, ts: { v: 1, c: 1, scope: 'own' } }) });
+    await db('roles').insert({ id: 'r-acc', name: 'Accounts', description: '', hue: 100, perms: JSON.stringify({ dash: { v: 1 } }) });
+    const ceo = await as('ceo@test.io');
+    const dev = await ceo.post('/api/v1/users').send({ name: 'Ravi Dev', email: 'ravi.dev@test.io', role: 'r-dev', dept: 'Backend' });
+    expect(dev.status).toBe(201);
+    const u = await db('users').where({ email: 'ravi.dev@test.io' }).first();
+    expect(u.member_id).toBeTruthy();
+    expect(await db('members').where({ id: u.member_id }).first()).toMatchObject({ name: 'Ravi Dev', team: 'Backend' });
+
+    await ceo.post('/api/v1/users').send({ name: 'Anu Accounts', email: 'anu@test.io', role: 'r-acc', dept: 'Management' });
+    expect((await db('users').where({ email: 'anu@test.io' }).first()).member_id).toBeNull();
+  });
+});

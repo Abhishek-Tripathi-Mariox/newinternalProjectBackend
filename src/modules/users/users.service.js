@@ -15,6 +15,21 @@ import { toUserDto } from './users.mapper.js';
 export const DELIVERY_ROLES = ['r-pm', 'r-tl', 'r-tm', 'r-qa'];
 /** Roles that own leads / follow-ups. */
 export const SALES_ROLES = ['r-sm', 'r-se'];
+/** Built-in roles that are never delivery members. */
+const NON_DELIVERY = ['r-super', 'r-admin', 'r-sm', 'r-se', 'r-client'];
+
+/**
+ * Does this role make someone a delivery member (Team & hours, project / milestone pickers)?
+ * Built-in PM / Team Lead / Team Member / QA always do; a custom role (e.g. "Developer") does when
+ * it can see timesheets, tasks or bugs.
+ */
+export function isDeliveryRole(role) {
+  if (!role) return false;
+  if (DELIVERY_ROLES.includes(role.id)) return true;
+  if (NON_DELIVERY.includes(role.id)) return false;
+  const p = role.perms || {};
+  return !!((p.ts && p.ts.v) || (p.tasks && p.tasks.v) || (p.bugs && p.bugs.v));
+}
 export const TEAMS = ['Web', 'Mobile', 'Backend', 'Design', 'QA', 'PMO'];
 const SUPER_ROLE = 'r-super';
 
@@ -49,7 +64,7 @@ async function getRow(id, q = db) {
 }
 export const get = async (id) => toUserDto(await getRow(id));
 
-const roleById = (id, q = db) => q('roles').where({ id }).first('id', 'name');
+const roleById = (id, q = db) => q('roles').where({ id }).first('id', 'name', 'perms');
 
 /** Only a Super Admin may grant the Super Admin role or change a Super Admin account. */
 function guardSuper(req, ...roleIds) {
@@ -76,7 +91,7 @@ async function validateForm(m, editId, q) {
  * delivery roles get a members row, sales roles a sales_owners row.
  */
 async function syncPeople(trx, m, role, old) {
-  const delivery = DELIVERY_ROLES.includes(m.role);
+  const delivery = isDeliveryRole(role);
   const team = TEAMS.includes(m.dept) ? m.dept : 'Web';
   let memberId = old ? old.member_id : null;
   let ownerId = old ? old.owner_id : null;
