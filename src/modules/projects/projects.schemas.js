@@ -81,6 +81,7 @@ export const updateProjectSchema = z.object({
   priority,
   brief: z.string().max(10000),
   clientEmail,
+  budgetHours: hours,
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 export const allocSchema = z.object({ allocHours: hours });

@@ -13,7 +13,6 @@ describe('new project with its own milestones', () => {
     const pm = await as('pm@test.io');
     const res = await pm.post(`${API}/projects`).send({
       ...base,
-      budgetHours: 999, // ignored when milestones are given
       milestones: [
         { name: 'Feature List', dueDate: '2026-11-08', allocHours: 5 },
         { name: ' ', dueDate: '2026-11-28', allocHours: 0 },
@@ -35,6 +34,17 @@ describe('new project with its own milestones', () => {
     expect(res.body.data.milestones.map((m) => m.name)).toEqual([
       'Feature List', 'UI/UX Milestone 1', 'Frontend Milestone 2', 'Backend Milestone 3', 'QA, Third Party, Go Live - Milestone 4',
     ]);
+  });
+
+  test('milestone hours above the budget are rejected; budget drives the team split', async () => {
+    const pm = await as('pm@test.io');
+    const ms = [{ name: 'A', dueDate: '2026-11-20', allocHours: 40 }, { name: 'B', dueDate: '2026-12-20', allocHours: 30 }];
+    let res = await pm.post(`${API}/projects`).send({ ...base, budgetHours: 60, milestones: ms });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe('Milestone hours (70h) are more than the budget (60h). Reduce them or raise the budget.');
+    res = await pm.post(`${API}/projects`).send({ ...base, budgetHours: 100, team: ['km'], milestones: ms });
+    expect(res.status).toBe(201);
+    expect(res.body.data.team.map((t) => t.allocHours)).toEqual([50, 50]);
   });
 
   test('milestone before the project start is rejected', async () => {
@@ -73,5 +83,41 @@ describe('add / delete milestones', () => {
     const res = await pm.delete(`${API}/milestones/${c.id}`);
     expect(res.status).toBe(422);
     expect(res.body.error.message).toMatch(/Hours are logged/);
+  });
+});
+
+describe('project hours budget', () => {
+  test('milestone hours cannot exceed the budget; raise the budget first', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({
+      ...base, budgetHours: 50, milestones: [{ name: 'A', dueDate: '2026-11-20', allocHours: 20 }, { name: 'B', dueDate: '2026-12-20', allocHours: 20 }],
+    })).body.data;
+    expect(p.budgetHours).toBe(50);
+    const [a] = p.milestones;
+
+    let res = await pm.patch(`${API}/milestones/${a.id}`).send({ allocHours: 40 });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe('Milestone hours would be 60h — more than the project budget (50h). Increase the project hours first (Edit project → Budget).');
+    res = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'C', dueDate: '2026-12-25', allocHours: 11 });
+    expect(res.status).toBe(422);
+    expect((await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'C', dueDate: '2026-12-25', allocHours: 10 })).status).toBe(201);
+
+    res = await pm.patch(`${API}/projects/${p.id}`).send({ budgetHours: 40 });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe('The budget can’t be less than the milestone hours (50h). Reduce milestone hours first.');
+    res = await pm.patch(`${API}/projects/${p.id}`).send({ budgetHours: 80 });
+    expect(res.body.data.budgetHours).toBe(80);
+    expect((await pm.patch(`${API}/milestones/${a.id}`).send({ allocHours: 50 })).status).toBe(200);
+  });
+
+  test('approving a CR adds its hours to the budget', async () => {
+    const pm = await as('pm@test.io');
+    await db('projects').where({ id: 'PR-101' }).update({ budget_hours: 260 });
+    const cr = (await pm.post(`${API}/change-requests`).send({
+      projectId: 'PR-101', title: 'Extra', description: '', requestedBy: 'Client', requestedByName: '', hours: 12, rate: 1000, extraDays: 0,
+      priority: 'Medium', target: 'new', team: [], tasks: [],
+    })).body.data;
+    expect((await pm.post(`${API}/change-requests/${cr.id}/actions`).send({ act: 'approve', signer: { name: 'Client Person' } })).status).toBe(200);
+    expect(Number((await db('projects').where({ id: 'PR-101' }).first()).budget_hours)).toBe(272);
   });
 });

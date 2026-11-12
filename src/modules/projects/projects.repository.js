@@ -3,7 +3,7 @@ import { db } from '../../db/knex.js';
 import { restrictTo } from '../../core/scope.js';
 import { toProject, toMilestone, toMember, toLog } from './projects.mapper.js';
 
-const PROJECT_COLS = ['id', 'name', 'client', 'services', 'status', 'pm_member_id', 'start_date', 'due_date', 'value', 'hue', 'priority', 'brief', 'client_email',
+const PROJECT_COLS = ['id', 'name', 'client', 'services', 'status', 'pm_member_id', 'start_date', 'due_date', 'value', 'hue', 'priority', 'brief', 'client_email', 'budget_hours',
   'portal_on', 'portal_token', 'created_at', 'updated_at'];
 
 /** Projects (optionally limited to `ids`) with team + links attached. */

@@ -303,6 +303,8 @@ export async function applyDecision(trx, c, p, act, { note, signer, via = 'pm' }
       msDue = ms.find((m) => m.id === msId).due_date || p.dueDate;
     }
     row.milestone_id = msId;
+    // The approved CR's hours are added to the project's hours budget.
+    await trx('projects').where({ id: p.id }).whereNotNull('budget_hours').increment('budget_hours', c.hours);
 
     // Project: value, due date, team and allocations.
     const tk = (c.tasks || []).filter((t) => t.title);

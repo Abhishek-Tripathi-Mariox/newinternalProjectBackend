@@ -199,7 +199,11 @@ export async function create(user, b) {
 
   const custom = Array.isArray(b.milestones) && b.milestones.length > 0;
   if (custom && b.milestones.some((m) => m.dueDate < b.startDate)) throw unprocessable('Milestone due dates can’t be before the project start date.');
-  const budget = custom ? b.milestones.reduce((x, m) => x + (+m.allocHours || 0), 0) : Math.max(0, +b.budgetHours || 0);
+  const msTotal = custom ? b.milestones.reduce((x, m) => x + (+m.allocHours || 0), 0) : 0;
+  const given = Math.max(0, +b.budgetHours || 0);
+  if (custom && given > 0 && msTotal > given) throw unprocessable(`Milestone hours (${hh(msTotal)}) are more than the budget (${hh(given)}). Reduce them or raise the budget.`);
+  // Team allocation splits the budget; with typed milestones and no budget, their total is the budget.
+  const budget = custom ? (given || msTotal) : given;
   const team = Array.from(new Set([pm].concat(b.team.filter((x) => x !== pm))));
   const each = Math.round(budget / team.length / 5) * 5;
 
@@ -210,6 +214,7 @@ export async function create(user, b) {
       id: pid, name: b.name.trim(), client: b.client.trim(), services, status: b.status, pm_member_id: pm, start_date: b.startDate, due_date: b.dueDate,
       value: +b.value || 0, hue: Math.floor(Math.random() * 360), priority: b.priority || 'Medium', brief: (b.brief || '').trim(),
       client_email: (b.clientEmail || '').trim().toLowerCase() || null,
+      budget_hours: budget,
     });
     await trx('project_members').insert(team.map((mid, i) => ({ project_id: pid, member_id: mid, alloc_hours: each, position: i })));
     const ms = custom
@@ -237,6 +242,11 @@ export async function update(user, id, b) {
     const row = {};
     for (const [k, col] of Object.entries(PATCH_COLS)) if (b[k] !== undefined) row[col] = typeof b[k] === 'string' ? b[k].trim() : b[k];
     if (row.client_email === '') row.client_email = null;
+    if (b.budgetHours !== undefined) {
+      const total = await msTotal(trx, id);
+      if (b.budgetHours < total) throw unprocessable(`The budget can’t be less than the milestone hours (${hh(total)}). Reduce milestone hours first.`);
+      row.budget_hours = b.budgetHours;
+    }
     if (b.pmId && b.pmId !== p.pmId) {
       await assertMembers([b.pmId], trx);
       if (!p.team.some((t) => t.memberId === b.pmId)) {
@@ -252,7 +262,7 @@ export async function update(user, id, b) {
 async function teamState(id, q = db) {
   const p = await repo.findProject(id, q);
   const ms = await repo.findMilestones([id], q);
-  const budget = ms.reduce((x, m) => x + m.allocHours, 0);
+  const budget = p.budgetHours != null ? p.budgetHours : ms.reduce((x, m) => x + m.allocHours, 0);
   const allocTotal = p.team.reduce((x, t) => x + t.allocHours, 0);
   return { team: p.team, budgetHours: budget, allocTotal, allocOverBudget: allocTotal > budget };
 }
@@ -339,12 +349,27 @@ async function pmMilestone(user, mid, q) {
   return { m, p };
 }
 
+/** Sum of a project's milestone hours (optionally leaving one milestone out). */
+async function msTotal(q, projectId, exceptId) {
+  const qb = q('milestones').where({ project_id: projectId });
+  if (exceptId) qb.whereNot({ id: exceptId });
+  const { s } = await qb.sum('alloc_hours as s').first();
+  return Number(s) || 0;
+}
+
+/** Milestone hours may not exceed the project's hours budget. */
+async function assertWithinBudget(q, p, total) {
+  if (p.budgetHours == null || total <= p.budgetHours + 1e-9) return;
+  throw unprocessable(`Milestone hours would be ${hh(total)} — more than the project budget (${hh(p.budgetHours)}). Increase the project hours first (Edit project → Budget).`);
+}
+
 /** addMilestone (PM only): appended after the last one. */
 export async function addMilestone(user, pid, b) {
   return db.transaction(async (trx) => {
     const p = await pmProject(user, pid, trx);
     await repo.lockProject(trx, p.id);
     if (b.dueDate < p.startDate) throw unprocessable('The due date can’t be before the project start date.');
+    await assertWithinBudget(trx, p, (await msTotal(trx, p.id)) + Math.max(0, +b.allocHours || 0));
     const rows = await trx('milestones').where({ project_id: p.id }).select('id', 'n');
     const n = rows.reduce((x, r) => Math.max(x, r.n), 0) + 1;
     const ids = new Set(rows.map((r) => r.id));
@@ -381,8 +406,12 @@ export async function deleteMilestone(user, mid) {
 /** updMs (PM only). A blank name falls back to "Milestone n". */
 export async function updateMilestone(user, mid, b) {
   return db.transaction(async (trx) => {
-    const { m } = await pmMilestone(user, mid, trx);
+    const { m, p } = await pmMilestone(user, mid, trx);
     const row = {};
+    if (b.allocHours !== undefined) {
+      await repo.lockProject(trx, p.id);
+      await assertWithinBudget(trx, p, (await msTotal(trx, p.id, mid)) + Math.max(0, +b.allocHours || 0));
+    }
     if (b.name !== undefined) row.name = b.name.trim() || `Milestone ${m.n}`;
     if (b.allocHours !== undefined) row.alloc_hours = Math.max(0, +b.allocHours || 0);
     if (b.status !== undefined) row.status = b.status;
