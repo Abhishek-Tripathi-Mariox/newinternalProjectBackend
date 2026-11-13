@@ -49,6 +49,7 @@ export const milestoneInput = z.object({
   dueDate: day,
   allocHours: hours.default(0),
   team: z.array(memberId).max(50).optional(),
+  notes: z.string().max(10000).optional(),
 });
 
 export const createProjectSchema = z.object({
@@ -62,6 +63,7 @@ export const createProjectSchema = z.object({
   dueDate: optDay,
   budgetHours: hours.default(0),
   team: z.array(memberId).max(100).default([]),
+  primaryTeam: z.array(memberId).max(100).default([]), // primary developers (subset of the team)
   value: z.coerce.number().min(0).max(1e12).default(0),
   priority: priority.default('Medium'),
   brief: z.string().max(10000).default(''),
@@ -82,10 +84,11 @@ export const updateProjectSchema = z.object({
   priority,
   brief: z.string().max(10000),
   clientEmail,
-  budgetHours: hours,
+  budgetHours: z.union([z.null(), hours]), // null = no budget set (no limit)
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
-export const allocSchema = z.object({ allocHours: hours });
+export const allocSchema = z.object({ allocHours: hours.optional(), primary: z.boolean().optional() })
+  .refine((b) => b.allocHours !== undefined || b.primary !== undefined, 'Nothing to update');
 export const addMemberSchema = z.object({ memberId, allocHours: hours.default(0) });
 export const linksSchema = z.object({ links: z.array(link).max(50) });
 export const portalSchema = z.object({ on: z.boolean() });
@@ -104,4 +107,5 @@ export const updateMilestoneSchema = z.object({
   status: z.enum(MILESTONE_STATUSES),
   dueDate: day,
   team: z.array(memberId).max(50),
+  notes: z.string().max(10000),
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');

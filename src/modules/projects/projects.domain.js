@@ -157,7 +157,7 @@ export function buildModel(data, f = {}, T = todayN()) {
   /** Budget, progress and health of a project (info()). */
   const info = (p) => {
     const ms = msOf[p.id] || [];
-    const budget = p.budgetHours != null ? +p.budgetHours : ms.reduce((x, m) => x + (+m.allocHours || 0), 0);
+    const budget = p.budgetLimit != null ? +p.budgetLimit : ms.reduce((x, m) => x + (+m.allocHours || 0), 0);
     const used = g(`p:${p.id}`).all;
     const curM = ms.find((m) => m.status !== 'Done');
     const ci = curM ? ms.indexOf(curM) : ms.length;

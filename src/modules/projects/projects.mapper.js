@@ -17,9 +17,9 @@ export function toProject(r, team = [], links = []) {
     hue: r.hue,
     priority: r.priority,
     brief: r.brief,
-    budgetHours: r.budget_hours == null ? null : num(r.budget_hours), // null = sum of milestone hours
+    budgetLimit: r.budget_hours == null ? null : num(r.budget_hours), // hours budget; null = not set (no limit)
     portal: { on: !!r.portal_on, token: r.portal_token || null },
-    team: team.map((t) => ({ memberId: t.member_id, allocHours: num(t.alloc_hours) })),
+    team: team.map((t) => ({ memberId: t.member_id, allocHours: num(t.alloc_hours), primary: !!t.is_primary })),
     links: links.map((l) => ({ id: Number(l.id), type: l.type, url: l.url })),
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
@@ -37,6 +37,7 @@ export function toMilestone(r, team = []) {
     status: r.status,
     crId: r.cr_id || null,
     team, // member ids working on this milestone
+    notes: r.notes || '',
     approval: r.approval_status
       ? { status: r.approval_status, askedAt: iso(r.approval_asked_at), at: iso(r.approval_at), note: r.approval_note || '' }
       : null,

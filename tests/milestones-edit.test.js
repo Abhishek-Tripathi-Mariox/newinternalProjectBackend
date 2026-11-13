@@ -92,7 +92,7 @@ describe('project hours budget', () => {
     const p = (await pm.post(`${API}/projects`).send({
       ...base, budgetHours: 50, milestones: [{ name: 'A', dueDate: '2026-11-20', allocHours: 20 }, { name: 'B', dueDate: '2026-12-20', allocHours: 20 }],
     })).body.data;
-    expect(p.budgetHours).toBe(50);
+    expect(p.budgetLimit).toBe(50);
     const [a] = p.milestones;
 
     let res = await pm.patch(`${API}/milestones/${a.id}`).send({ allocHours: 40 });
@@ -106,7 +106,7 @@ describe('project hours budget', () => {
     expect(res.status).toBe(422);
     expect(res.body.error.message).toBe('The budget can’t be less than the milestone hours (50h). Reduce milestone hours first.');
     res = await pm.patch(`${API}/projects/${p.id}`).send({ budgetHours: 80 });
-    expect(res.body.data.budgetHours).toBe(80);
+    expect(res.body.data.budgetLimit).toBe(80);
     expect((await pm.patch(`${API}/milestones/${a.id}`).send({ allocHours: 50 })).status).toBe(200);
   });
 
@@ -140,5 +140,39 @@ describe('milestone team', () => {
     expect(add.body.data.team).toEqual(['dn']);
     expect((await pm.patch(`${API}/milestones/${p.milestones[1].id}`).send({ team: ['nobody'] })).status).toBe(422);
     expect((await pm.patch(`${API}/milestones/${p.milestones[1].id}`).send({ team: [] })).body.data.team).toEqual([]);
+  });
+});
+
+describe('milestone notes and "no budget"', () => {
+  test('notes can be set on add and edit; a project without a budget has no limit', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({ ...base })).body.data; // no budget, template milestones with 0h
+    expect(p.budgetLimit).toBeNull();
+    const [m1] = p.milestones;
+    let res = await pm.patch(`${API}/milestones/${m1.id}`).send({ allocHours: 40, notes: '  Client wants dark mode first  ' });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ allocHours: 40, notes: 'Client wants dark mode first' });
+    res = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'Extra', dueDate: '2026-12-30', notes: 'Phase 2 scope' });
+    expect(res.body.data.notes).toBe('Phase 2 scope');
+    // setting a budget turns the limit on; clearing it (null) turns it off
+    expect((await pm.patch(`${API}/projects/${p.id}`).send({ budgetHours: 40 })).status).toBe(200);
+    expect((await pm.patch(`${API}/milestones/${m1.id}`).send({ allocHours: 41 })).status).toBe(422);
+    expect((await pm.patch(`${API}/projects/${p.id}`).send({ budgetHours: null })).body.data.budgetLimit).toBeNull();
+    expect((await pm.patch(`${API}/milestones/${m1.id}`).send({ allocHours: 41 })).status).toBe(200);
+  });
+});
+
+describe('primary developer', () => {
+  test('set on create and toggled from the team', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({ ...base, team: ['km', 'vg'], primaryTeam: ['km'] })).body.data;
+    expect(p.team.map((t) => [t.memberId, t.primary])).toEqual([['mj', false], ['km', true], ['vg', false]]);
+    let res = await pm.put(`${API}/projects/${p.id}/members/vg`).send({ primary: true });
+    expect(res.status).toBe(200);
+    await pm.put(`${API}/projects/${p.id}/members/km`).send({ primary: false });
+    const team = (await pm.get(`${API}/projects/${p.id}`)).body.data.team;
+    expect(team.filter((t) => t.primary).map((t) => t.memberId)).toEqual(['vg']);
+    const dev = await as('dev@test.io');
+    expect((await dev.put(`${API}/projects/${p.id}/members/vg`).send({ primary: false })).status).toBe(403);
   });
 });

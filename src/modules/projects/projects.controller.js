@@ -16,7 +16,7 @@ export const allMilestones = async (req, res) => {
 export const milestones = async (req, res) => ok(res, await svc.milestones(req.user, req.valid.params.id));
 export const create = async (req, res) => created(res, await svc.create(req.user, req.body));
 export const update = async (req, res) => ok(res, await svc.update(req.user, req.valid.params.id, req.body));
-export const setAlloc = async (req, res) => ok(res, await svc.setAlloc(req.user, req.valid.params.id, req.valid.params.memberId, req.body.allocHours));
+export const setAlloc = async (req, res) => ok(res, await svc.setAlloc(req.user, req.valid.params.id, req.valid.params.memberId, req.body.allocHours, req.body.primary));
 export const addMember = async (req, res) => {
   const out = await svc.addMember(req.user, req.valid.params.id, req.body);
   return out.added ? created(res, out) : ok(res, out);
