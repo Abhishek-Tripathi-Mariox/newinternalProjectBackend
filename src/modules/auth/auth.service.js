@@ -11,6 +11,7 @@ const INVALID = 'Invalid email or password';
 export const principalDto = (p) => (p ? {
   id: p.id, name: p.name, email: p.email, status: p.status, role: p.role, isSuper: p.isSuper, memberId: p.memberId,
   ownerId: p.ownerId, clientOf: p.clientOf, team: p.team, dept: p.dept, shiftHours: p.shiftHours, pid: p.pid,
+  reportees: p.reportees || [],
 } : null);
 
 /** Issue an access token + a stored (hashed) refresh token for a user (call after the user's changes are committed). */

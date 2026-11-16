@@ -17,6 +17,7 @@ export async function loadPrincipal(userId) {
       'r.id as role_id', 'r.name as role_name', 'r.perms', 'm.team as member_team',
     );
   if (!u) return null;
+  const reportees = u.role_id === 'r-super' ? [] : await reporteesOf(u.id);
   return {
     id: u.id,
     name: u.name,
@@ -31,7 +32,27 @@ export async function loadPrincipal(userId) {
     dept: u.dept,
     shiftHours: Number(u.shift_hours) || 8,
     pid: u.member_id || u.owner_id || u.id.replace(/^u-/, ''),
+    // Active people who report to this user — directly or further down the chain ("Reports to").
+    reportees,
   };
+}
+
+/**
+ * Everyone under `userId` in the "Reports to" hierarchy (direct and indirect), active accounts
+ * only, clients excluded: [{id, pid, name, role, team}]. Depth-limited so a loop can't run away.
+ */
+export async function reporteesOf(userId, q = db) {
+  const { rows } = await q.raw(`
+    WITH RECURSIVE tree(id, depth) AS (
+      SELECT id, 1 FROM users WHERE reports_to = ? AND id <> ?
+      UNION
+      SELECT u.id, t.depth + 1 FROM users u JOIN tree t ON u.reports_to = t.id WHERE t.depth < 10 AND u.id <> ?
+    )
+    SELECT DISTINCT u.id, u.name, u.member_id, u.owner_id, r.name AS role_name, m.team
+    FROM tree t JOIN users u ON u.id = t.id JOIN roles r ON r.id = u.role_id LEFT JOIN members m ON m.id = u.member_id
+    WHERE u.status = 'Active' AND u.role_id NOT IN ('r-client', 'r-super')
+    ORDER BY u.name`, [userId, userId, userId]);
+  return rows.map((r) => ({ id: r.id, pid: r.member_id || r.owner_id || r.id.replace(/^u-/, ''), name: r.name, role: r.role_name, team: r.team || null }));
 }
 
 /**
