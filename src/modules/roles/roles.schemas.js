@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const MODS = ['dash', 'leads', 'fu', 'projects', 'tasks', 'bugs', 'ts', 'team', 'users'];
+/** `att` = Attendance & reports (view only): All = everyone, Team = self + people who report to them, Own = self. */
+export const MODS = ['dash', 'leads', 'fu', 'projects', 'tasks', 'bugs', 'ts', 'team', 'users', 'att'];
 
 export const roleIdParams = z.object({ id: z.string().regex(/^r-[a-z0-9-]{1,40}$/i, 'Invalid role id') });
 

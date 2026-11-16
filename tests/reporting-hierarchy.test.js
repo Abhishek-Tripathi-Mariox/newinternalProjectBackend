@@ -43,6 +43,19 @@ describe('"Reports to" hierarchy', () => {
     expect(whos((await pm.get(`${API}/shift-reports?person=dn`)).body.data, 'who')).toEqual([]);
   });
 
+  test('people below you without the Attendance & reports permission: own data only', async () => {
+    // dev (Team Member role, no att permission) has si reporting to them
+    expect(whos((await (await as('dev@test.io')).get(`${API}/shift-reports`)).body.data, 'who')).toEqual(['vg']);
+  });
+
+  test('Attendance & reports scope All sees everyone; turning it off means own only', async () => {
+    await db('roles').where({ id: 'r-qa' }).update({ perms: db.raw(`perms || '{"att":{"v":true,"c":false,"e":false,"d":false,"scope":"all"}}'::jsonb`) });
+    expect(whos((await (await as('qa@test.io')).get(`${API}/shift-reports`)).body.data, 'who')).toEqual(['dn', 'si', 'vg']);
+    await db('roles').where({ id: 'r-pm' }).update({ perms: db.raw(`perms || '{"att":{"v":false,"c":false,"e":false,"d":false,"scope":"all"}}'::jsonb`) });
+    expect(whos((await (await as('pm@test.io')).get(`${API}/shift-reports`)).body.data, 'who')).toEqual([]);
+    await db('roles').where({ id: 'r-qa' }).update({ perms: db.raw(`perms || '{"att":{"v":false,"c":false,"e":false,"d":false,"scope":"all"}}'::jsonb`) });
+  });
+
   test('someone with no team still sees only their own', async () => {
     const qa = await as('qa@test.io');
     expect(whos((await qa.get(`${API}/shift-reports`)).body.data, 'who')).toEqual(['dn']);

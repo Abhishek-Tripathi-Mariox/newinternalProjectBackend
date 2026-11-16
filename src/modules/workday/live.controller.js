@@ -20,14 +20,18 @@ export const hoursLogCsv = async (req, res) => sendCsv(res, await svc.hoursLogCs
 
 /**
  * Whose raw workday data the caller may read: null = everyone (signed-in Super Admin, not
- * previewing; narrowed by ?person=). Anyone else: their own pid plus the people who report to
- * them ("Reports to", direct or indirect); ?person= narrows to one of those (anyone else is
- * forced back to their own pid). Clients and accounts without a person id get 403.
+ * previewing; narrowed by ?person=). Anyone else by their role's "Attendance & reports" (att)
+ * permission: All = everyone; Team = their own pid plus the people who report to them ("Reports
+ * to", direct or indirect); none / Own = their own pid. ?person= narrows within that (anyone
+ * outside it is forced back to their own pid). Clients and accounts without a person id get 403.
  */
 export function scopePids(req, person) {
   if (req.user.isSuper && !req.previewing) return person ? [person] : null;
   if (req.user.role.id === 'r-client' || !req.user.pid) throw forbidden('Clients have no workday');
-  const mine = [req.user.pid, ...(req.user.reportees || []).map((r) => r.pid)];
+  // "Attendance & reports" permission: All = everyone, Team = + people who report to them, else own.
+  const att = (req.user.role.perms || {}).att || {};
+  if (att.v && (att.scope || 'all') === 'all') return person ? [person] : null;
+  const mine = att.v && att.scope === 'team' ? [req.user.pid, ...(req.user.reportees || []).map((r) => r.pid)] : [req.user.pid];
   if (person) return mine.includes(person) ? [person] : [req.user.pid];
   return mine;
 }
