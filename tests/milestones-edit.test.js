@@ -204,3 +204,23 @@ describe('hours per person inside a milestone', () => {
     expect(res.status).toBe(422);
   });
 });
+
+describe('why on hold / delayed', () => {
+  test('a reason is required to put a project on hold; the note is kept with a timestamp', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({ ...base, status: 'Running' })).body.data;
+    let res = await pm.patch(`${API}/projects/${p.id}`).send({ status: 'On hold' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe('Pick why the project is on hold (client end, third party…).');
+    res = await pm.patch(`${API}/projects/${p.id}`).send({ status: 'On hold', statusReason: 'Client end', statusNote: 'Waiting for app content and logo' });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ status: 'On hold', statusReason: 'Client end', statusNote: 'Waiting for app content and logo' });
+    expect(res.body.data.statusNoteAt).toEqual(expect.any(String));
+    // a delay note on a running project; clearing removes the timestamp
+    res = await pm.patch(`${API}/projects/${p.id}`).send({ status: 'Running', statusReason: 'Third party', statusNote: 'Payment gateway KYC pending' });
+    expect(res.body.data).toMatchObject({ status: 'Running', statusReason: 'Third party' });
+    res = await pm.patch(`${API}/projects/${p.id}`).send({ statusReason: '', statusNote: '' });
+    expect(res.body.data).toMatchObject({ statusReason: '', statusNote: '', statusNoteAt: null });
+    expect((await pm.post(`${API}/projects`).send({ ...base, status: 'On hold' })).status).toBe(422);
+  });
+});

@@ -12,6 +12,7 @@ router.get('/', authorize('leads', 'v'), validate({ query: s.listQuery }), ctrl.
 router.get('/export.csv', authorize('leads', 'v'), validate({ query: s.exportQuery }), ctrl.exportCsv);
 router.get('/duplicates', authorize('leads', 'v'), validate({ query: s.duplicatesQuery }), ctrl.duplicates);
 router.post('/', authorize('leads', 'c'), validate({ body: s.createLeadSchema }), ctrl.create);
+router.post('/import', authorize('leads', 'c'), validate({ body: s.importSchema }), ctrl.importLeads);
 router.post('/bulk', authorize('leads', 'e'), validate({ body: s.bulkSchema }), ctrl.bulk);
 router.post('/merge', authorize('leads', 'e'), validate({ body: s.mergeSchema }), ctrl.merge);
 

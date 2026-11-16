@@ -136,7 +136,7 @@ describe('PM-only edits', () => {
     expect(a.status).toBe(403);
 
     const pm = await as('pm@test.io');
-    const res = await pm.patch('/api/v1/projects/PR-101').send({ status: 'On hold', priority: 'Low' });
+    const res = await pm.patch('/api/v1/projects/PR-101').send({ status: 'On hold', statusReason: 'Client end', priority: 'Low' });
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({ status: 'On hold', priority: 'Low' });
   });

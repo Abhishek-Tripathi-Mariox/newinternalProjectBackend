@@ -235,6 +235,74 @@ export async function create(body, ctx) {
   }).then((id) => get(id, ctx));
 }
 
+/**
+ * CSV import. Each row: company, contact (required), email, phone, services ("A; B"), source, owner
+ * (name or email of a sales person), status (a pipeline stage; default New), value, notes.
+ * Valid rows are created; others are reported back with their row number (row 2 = first data row).
+ * Rows whose email or phone already belongs to a lead are skipped unless skipDuplicates is false.
+ */
+export async function importLeads({ rows, skipDuplicates }, ctx) {
+  const { user } = ctx;
+  const errors = [];
+  const skipped = [];
+  const ids = [];
+  await db.transaction(async (trx) => {
+    const { scope } = await peopleScope(user, 'leads');
+    if (scope === 'own' && !user.ownerId) throw forbidden('Your account has no sales profile');
+    const [stages, sources, owners, users] = await Promise.all([
+      repo.stageNames(trx), repo.sourceNames(trx), trx('sales_owners').select('id', 'name', 'active'),
+      trx('users').whereNotNull('owner_id').select('owner_id', 'email'),
+    ]);
+    const lc = (s) => String(s || '').trim().toLowerCase();
+    const findIn = (list, v) => list.find((x) => lc(x) === lc(v));
+    const ownerOf = (v) => {
+      if (!v) return null;
+      const byName = owners.find((o) => lc(o.name) === lc(v));
+      if (byName) return byName.id;
+      const byMail = users.find((u) => lc(u.email) === lc(v));
+      return byMail ? byMail.owner_id : undefined;
+    };
+    const defOwner = user.ownerId || (owners.find((o) => o.active) || {}).id;
+    const digits = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+    const existing = await trx('leads').select('id', 'email', 'phone');
+    const seenEmail = new Map(existing.filter((l) => l.email).map((l) => [lc(l.email), l.id]));
+    const seenPhone = new Map(existing.filter((l) => digits(l.phone).length >= 7).map((l) => [digits(l.phone), l.id]));
+
+    for (const [i, r] of rows.entries()) {
+      const n = i + 2; // spreadsheet row number (row 1 = headers)
+      if (Object.values(r).every((v) => !v)) continue; // blank line
+      const fail = (msg) => errors.push({ row: n, company: r.company, error: msg });
+      if (!r.company || !r.contact) { fail('Company and contact are required.'); continue; }
+      if (r.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) { fail(`"${r.email}" is not a valid email.`); continue; }
+      const services = r.services.split(/[;,|]/).map((x) => x.trim()).filter(Boolean);
+      if (!services.length) { fail('Add at least one service (separate several with ;).'); continue; }
+      const source = r.source ? findIn(sources, r.source) : sources[0] || null;
+      if (r.source && !source) { fail(`Unknown source "${r.source}" — add it under Lead setup first.`); continue; }
+      const status = r.status ? findIn(stages, r.status) : 'New';
+      if (!status) { fail(`Unknown status "${r.status}" — use one of: ${stages.join(', ')}.`); continue; }
+      let owner = scope === 'own' ? user.ownerId : ownerOf(r.owner);
+      if (owner === undefined) { fail(`Unknown owner "${r.owner}" — use a sales person's name or email.`); continue; }
+      owner = owner || defOwner;
+      if (!owner) { fail('No sales person to own this lead.'); continue; }
+      const value = r.value ? Number(String(r.value).replace(/[₹,\s]/g, '')) : 0;
+      if (!Number.isFinite(value) || value < 0) { fail(`Value "${r.value}" is not a number.`); continue; }
+      const dup = (r.email && seenEmail.get(lc(r.email))) || (digits(r.phone).length >= 7 && seenPhone.get(digits(r.phone)));
+      if (dup && skipDuplicates) { skipped.push({ row: n, company: r.company, duplicateOf: dup }); continue; }
+
+      const id = await nextId(trx, 'lead');
+      await repo.insertLead({
+        id, company: r.company, contact: r.contact, email: r.email, phone: r.phone, services, source,
+        owner_id: owner, first_owner_id: owner, status, value, notes: r.notes,
+      }, trx);
+      await repo.addActivities([act(ctx, id, 'note', 'Imported from CSV')], trx);
+      if (r.email) seenEmail.set(lc(r.email), id);
+      if (digits(r.phone).length >= 7) seenPhone.set(digits(r.phone), id);
+      ids.push(id);
+    }
+  });
+  return { created: ids.length, ids, skipped, errors };
+}
+
 /** Apply a stage change; records "Stage: A → B". */
 async function setStatusTx(trx, lead, to, ctx) {
   if (lead.status === to) return lead;

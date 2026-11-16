@@ -20,6 +20,7 @@ export async function exportCsv(req, res) {
 
 export async function duplicates(req, res) { ok(res, await svc.duplicates(req.valid.query, ctx(req))); }
 export async function get(req, res) { ok(res, await svc.get(P(req).id, ctx(req))); }
+export async function importLeads(req, res) { ok(res, await svc.importLeads(req.body, ctx(req))); }
 export async function create(req, res) { created(res, await svc.create(req.body, ctx(req))); }
 export async function update(req, res) { ok(res, await svc.update(P(req).id, req.body, ctx(req))); }
 export async function setStatus(req, res) { ok(res, await svc.setStatus(P(req).id, req.body.status, ctx(req))); }

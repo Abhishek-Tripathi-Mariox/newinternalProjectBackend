@@ -189,6 +189,7 @@ async function assertMembers(ids, q) {
 /** saveProj: validation, team allocation split, milestones (as typed in the form, or the 5 template ones). */
 export async function create(user, b) {
   if (!b.name.trim() || !b.client.trim()) throw unprocessable('Project name and client are required.');
+  if (b.status === 'On hold' && !b.statusReason) throw unprocessable('Pick why the project is on hold (client end, third party…).');
   const services = (b.services || (b.service ? [b.service] : [])).map((s) => s.trim()).filter(Boolean);
   if (!services.length) throw unprocessable('Pick at least one service.');
   if (!b.startDate || !b.dueDate || b.dueDate < b.startDate) throw unprocessable('Pick a start date and a due date after it.');
@@ -215,6 +216,9 @@ export async function create(user, b) {
       value: +b.value || 0, hue: Math.floor(Math.random() * 360), priority: b.priority || 'Medium', brief: (b.brief || '').trim(),
       client_email: (b.clientEmail || '').trim().toLowerCase() || null,
       budget_hours: budget > 0 ? budget : null, // no budget given → no limit until one is set
+      status_reason: b.statusReason || '',
+      status_note: (b.statusNote || '').trim(),
+      status_note_at: b.statusReason || (b.statusNote || '').trim() ? new Date() : null,
     });
     await trx('project_members').insert(team.map((mid, i) => ({ project_id: pid, member_id: mid, alloc_hours: each, position: i, is_primary: (b.primaryTeam || []).includes(mid) })));
     const ms = custom
@@ -243,6 +247,15 @@ export async function update(user, id, b) {
     const row = {};
     for (const [k, col] of Object.entries(PATCH_COLS)) if (b[k] !== undefined) row[col] = typeof b[k] === 'string' ? b[k].trim() : b[k];
     if (row.client_email === '') row.client_email = null;
+    // Why on hold / delayed: a reason is required when a project is put on hold.
+    const reason = b.statusReason !== undefined ? b.statusReason : p.statusReason;
+    if (b.status === 'On hold' && p.status !== 'On hold' && !reason) throw unprocessable('Pick why the project is on hold (client end, third party…).');
+    if (b.statusReason !== undefined || b.statusNote !== undefined) {
+      if (b.statusReason !== undefined) row.status_reason = b.statusReason;
+      if (b.statusNote !== undefined) row.status_note = b.statusNote;
+      const note = b.statusNote !== undefined ? b.statusNote : p.statusNote;
+      row.status_note_at = reason || note ? new Date() : null;
+    }
     if (b.budgetHours === null) row.budget_hours = null;
     else if (b.budgetHours !== undefined) {
       const total = await msTotal(trx, id);

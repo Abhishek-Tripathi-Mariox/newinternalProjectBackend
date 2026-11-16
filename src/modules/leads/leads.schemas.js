@@ -54,6 +54,16 @@ export const createLeadSchema = z.object({
   notes: text(10000).default(''),
 });
 
+/** CSV import: rows as parsed by the browser (header names already mapped to these keys). */
+const cell = (max) => z.union([z.string(), z.number()]).optional().transform((v) => (v == null ? '' : String(v).trim().slice(0, max)));
+export const importSchema = z.object({
+  rows: z.array(z.object({
+    company: cell(200), contact: cell(200), email: cell(200), phone: cell(50), services: cell(1000),
+    source: cell(100), owner: cell(200), status: cell(100), value: cell(30), notes: cell(10000),
+  })).min(1, 'The file has no rows.').max(2000, 'Import at most 2,000 leads at a time.'),
+  skipDuplicates: z.boolean().default(true),
+});
+
 export const updateLeadSchema = z.object({
   company: text(200).optional(),
   contact: text(200).optional(),

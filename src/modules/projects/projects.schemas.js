@@ -54,6 +54,8 @@ export const milestoneInput = z.object({
   notes: z.string().max(10000).optional(),
 });
 
+export const STATUS_REASONS = ['Client end', 'Third party', 'Internal / team', 'Payment pending', 'Scope change', 'Other'];
+
 export const createProjectSchema = z.object({
   name: z.string().max(200).default(''),
   client: z.string().max(200).default(''),
@@ -72,6 +74,8 @@ export const createProjectSchema = z.object({
   clientEmail: clientEmail.default(''),
   links: z.array(link).max(50).default([]),
   milestones: z.array(milestoneInput).max(30).optional(), // omitted → the five template milestones
+  statusReason: z.enum([...STATUS_REASONS, '']).default(''),
+  statusNote: z.string().trim().max(2000).default(''),
 });
 
 export const updateProjectSchema = z.object({
@@ -87,6 +91,8 @@ export const updateProjectSchema = z.object({
   brief: z.string().max(10000),
   clientEmail,
   budgetHours: z.union([z.null(), hours]), // null = no budget set (no limit)
+  statusReason: z.enum([...STATUS_REASONS, '']),
+  statusNote: z.string().trim().max(2000),
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 export const allocSchema = z.object({ allocHours: hours.optional(), primary: z.boolean().optional() })

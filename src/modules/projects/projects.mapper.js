@@ -8,6 +8,9 @@ export function toProject(r, team = [], links = []) {
     name: r.name,
     client: r.client,
     clientEmail: r.client_email || '',
+    statusReason: r.status_reason || '', // why on hold / delayed
+    statusNote: r.status_note || '',
+    statusNoteAt: iso(r.status_note_at),
     services: r.services || [],
     status: r.status,
     pmId: r.pm_member_id,
