@@ -55,9 +55,14 @@ function act(pid, fn) {
   });
 }
 
-export function checkIn(pid) {
+/**
+ * Check in. Once a person has checked out (or ended their shift) they cannot check in again the
+ * same day — `reopen` (Super Admin from the live board) lifts that, e.g. to fix a mistaken checkout.
+ */
+export function checkIn(pid, { reopen = false } = {}) {
   return act(pid, async (q, st, t) => {
     if (st.checkedIn) throw conflict('Already checked in.');
+    if (!reopen && st.list.some((e) => e.k === 'logout')) throw conflict("Today's shift has ended — you can check in again tomorrow.");
     await repo.insertEvent(q, pid, 'login', t);
     await repo.feed(q, pid, 'in', 'Checked in', t);
     return { message: 'Checked in', at: iso(t) };

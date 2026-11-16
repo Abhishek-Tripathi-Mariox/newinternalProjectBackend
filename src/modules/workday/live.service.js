@@ -165,7 +165,7 @@ export async function liveAction(pid, action, body = {}) {
   const ok = (await repo.member(db, pid)) || (await repo.salesOwner(db, pid));
   if (!ok) throw notFound('Person');
   switch (action) {
-    case 'check-in': return wd.checkIn(pid);
+    case 'check-in': return wd.checkIn(pid, { reopen: true });
     case 'check-out': return wd.checkOut(pid);
     case 'break': return wd.startBreak(pid, body.type || null, body.note || '');
     case 'resume': return wd.endBreak(pid);

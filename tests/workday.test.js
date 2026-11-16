@@ -211,6 +211,15 @@ describe('delivery day: check-in → timer → break → resume → end shift', 
     const kinds = (await db('attendance_events').where({ person_id: 'dn' }).orderBy('id')).map((e) => e.kind);
     expect(kinds).toEqual(['login', 'break', 'resume', 'logout']);
   });
+
+  test('no second check-in the same day after checking out (Super Admin can reopen)', async () => {
+    const qa = await as('qa@test.io');
+    const r = await qa.post(`${W}/check-in`);
+    expect(r.status).toBe(409);
+    expect(r.body.error.message).toBe("Today's shift has ended — you can check in again tomorrow.");
+    const ceo = await as('ceo@test.io');
+    expect((await ceo.post('/api/v1/live/dn/check-in')).status).toBe(200);
+  });
 });
 
 describe('PM and sales end-shift forms', () => {
