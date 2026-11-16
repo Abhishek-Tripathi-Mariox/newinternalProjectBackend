@@ -26,15 +26,33 @@ describe('lead import', () => {
     });
     expect(res.status).toBe(200);
     const d = res.body.data;
-    expect(d.created).toBe(2);
-    expect(d.errors.map((e) => e.row)).toEqual([3, 5, 6, 7]);
-    expect(d.errors[1].error).toBe('Unknown source "Billboard" — add it under Lead setup first.');
-    expect(d.skipped).toEqual([{ row: 4, company: 'Dup Co', duplicateOf: 'MX-1001' }, { row: 9, company: 'Same Phone', duplicateOf: d.ids[1] }]);
+    // row 3 (no company) → company = contact; rows 5–7 import with warnings; rows 4 and 9 are duplicates
+    expect(d.created).toBe(6);
+    expect(d.errors).toEqual([]);
+    expect(d.warnings.map((w) => w.row)).toEqual([5, 6, 7]);
+    expect(d.warnings[0].warning).toBe('Source "Billboard" isn\'t in Lead setup — used Website.');
+    expect(d.skipped.map((x) => x.row)).toEqual([4, 9]);
 
     const nova = await db('leads').where({ id: d.ids[0] }).first();
     expect(nova).toMatchObject({ company: 'Nova Labs', source: 'LinkedIn', owner_id: 'ps', status: 'Qualified', services: ['Mobile App', 'Web Development'], notes: 'From expo' });
     expect(Number(nova.value)).toBe(150000);
-    expect((await db('leads').where({ id: d.ids[1] }).first()).owner_id).toBe('ps');
+    expect(await db('leads').where({ id: d.ids[1] }).first()).toMatchObject({ company: 'X', contact: 'X' });
+    expect(await db('leads').where({ id: d.ids[3] }).first()).toMatchObject({ status: 'New', notes: 'Imported status: Thinking' });
+  });
+
+  test('owner names match without spaces; only a missing name or a bad email fails a row', async () => {
+    const sm = await as('sm@test.io');
+    const res = await sm.post(API).send({
+      rows: [
+        row({ company: '', contact: 'Monika Joshi', services: '', owner: 'PriyaSharma', email: 'monika@x.io' }),
+        row({ company: '', contact: '', phone: '9876500000' }),
+        row({ company: 'Bad Mail', email: 'not-an-email' }),
+      ],
+    });
+    const d = res.body.data;
+    expect(d.created).toBe(1);
+    expect(await db('leads').where({ id: d.ids[0] }).first()).toMatchObject({ company: 'Monika Joshi', owner_id: 'ps', services: [] });
+    expect(d.errors.map((e) => [e.row, e.error])).toEqual([[3, 'Add a company or a contact name.'], [4, '"not-an-email" is not a valid email.']]);
   });
 
   test('a sales executive imports only for themselves', async () => {

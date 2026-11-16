@@ -236,14 +236,17 @@ export async function create(body, ctx) {
 }
 
 /**
- * CSV import. Each row: company, contact (required), email, phone, services ("A; B"), source, owner
- * (name or email of a sales person), status (a pipeline stage; default New), value, notes.
- * Valid rows are created; others are reported back with their row number (row 2 = first data row).
+ * CSV import. Each row: company and / or contact (one is required; the other copies it), email, phone,
+ * services ("A; B", optional), source, owner (sales person's name or email; spaces / case ignored),
+ * status (a pipeline stage; default New), value, notes. An unknown source / status / owner doesn't fail
+ * the row: the default is used, a warning is returned and the original value is kept in the notes.
+ * Rows with real problems (no name, bad email / value) are reported with their row number (row 2 = first data row).
  * Rows whose email or phone already belongs to a lead are skipped unless skipDuplicates is false.
  */
 export async function importLeads({ rows, skipDuplicates }, ctx) {
   const { user } = ctx;
   const errors = [];
+  const warnings = [];
   const skipped = [];
   const ids = [];
   await db.transaction(async (trx) => {
@@ -254,10 +257,11 @@ export async function importLeads({ rows, skipDuplicates }, ctx) {
       trx('users').whereNotNull('owner_id').select('owner_id', 'email'),
     ]);
     const lc = (s) => String(s || '').trim().toLowerCase();
-    const findIn = (list, v) => list.find((x) => lc(x) === lc(v));
+    const findIn = (list, v) => list.find((x) => lc(x) === lc(v)) || list.find((x) => lc(x).replace(/[^a-z0-9]/g, '') === lc(v).replace(/[^a-z0-9]/g, ''));
+    const squash = (x) => lc(x).replace(/[^a-z0-9@.]/g, '');
     const ownerOf = (v) => {
       if (!v) return null;
-      const byName = owners.find((o) => lc(o.name) === lc(v));
+      const byName = owners.find((o) => lc(o.name) === lc(v)) || owners.find((o) => squash(o.name) === squash(v));
       if (byName) return byName.id;
       const byMail = users.find((u) => lc(u.email) === lc(v));
       return byMail ? byMail.owner_id : undefined;
@@ -271,27 +275,41 @@ export async function importLeads({ rows, skipDuplicates }, ctx) {
     for (const [i, r] of rows.entries()) {
       const n = i + 2; // spreadsheet row number (row 1 = headers)
       if (Object.values(r).every((v) => !v)) continue; // blank line
-      const fail = (msg) => errors.push({ row: n, company: r.company, error: msg });
-      if (!r.company || !r.contact) { fail('Company and contact are required.'); continue; }
+      const fail = (msg) => errors.push({ row: n, company: r.company || r.contact, error: msg });
+      const notes = [];
+      const warn = (msg, keep) => { warnings.push({ row: n, company: r.company || r.contact, warning: msg }); if (keep) notes.push(keep); };
+      if (!r.company && !r.contact) { fail('Add a company or a contact name.'); continue; }
+      const company = r.company || r.contact;
+      const contact = r.contact || r.company;
       if (r.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email)) { fail(`"${r.email}" is not a valid email.`); continue; }
       const services = r.services.split(/[;,|]/).map((x) => x.trim()).filter(Boolean);
-      if (!services.length) { fail('Add at least one service (separate several with ;).'); continue; }
-      const source = r.source ? findIn(sources, r.source) : sources[0] || null;
-      if (r.source && !source) { fail(`Unknown source "${r.source}" — add it under Lead setup first.`); continue; }
-      const status = r.status ? findIn(stages, r.status) : 'New';
-      if (!status) { fail(`Unknown status "${r.status}" — use one of: ${stages.join(', ')}.`); continue; }
+      let source = r.source ? findIn(sources, r.source) : sources[0] || null;
+      if (r.source && !source) {
+        source = sources[0] || null;
+        warn(`Source "${r.source}" isn't in Lead setup — used ${source || 'none'}.`, `Imported source: ${r.source}`);
+      }
+      let status = r.status ? findIn(stages, r.status) : 'New';
+      if (!status) {
+        status = stages.includes('New') ? 'New' : stages[0];
+        warn(`Status "${r.status}" isn't a pipeline stage — put in ${status}.`, `Imported status: ${r.status}`);
+      }
       let owner = scope === 'own' ? user.ownerId : ownerOf(r.owner);
-      if (owner === undefined) { fail(`Unknown owner "${r.owner}" — use a sales person's name or email.`); continue; }
+      if (owner === undefined) {
+        warn(`Owner "${r.owner}" isn't a sales person — assigned to you / the default owner.`, `Imported owner: ${r.owner}`);
+        owner = null;
+      }
       owner = owner || defOwner;
       if (!owner) { fail('No sales person to own this lead.'); continue; }
       const value = r.value ? Number(String(r.value).replace(/[₹,\s]/g, '')) : 0;
       if (!Number.isFinite(value) || value < 0) { fail(`Value "${r.value}" is not a number.`); continue; }
       const dup = (r.email && seenEmail.get(lc(r.email))) || (digits(r.phone).length >= 7 && seenPhone.get(digits(r.phone)));
-      if (dup && skipDuplicates) { skipped.push({ row: n, company: r.company, duplicateOf: dup }); continue; }
+      if (dup && skipDuplicates) { skipped.push({ row: n, company, duplicateOf: dup }); continue; }
+      const allNotes = [r.notes, ...notes].filter(Boolean).join('\n');
+      r.company = company; r.contact = contact; r.notes = allNotes; r.services = services;
 
       const id = await nextId(trx, 'lead');
       await repo.insertLead({
-        id, company: r.company, contact: r.contact, email: r.email, phone: r.phone, services, source,
+        id, company: r.company, contact: r.contact, email: r.email, phone: r.phone, services: r.services, source,
         owner_id: owner, first_owner_id: owner, status, value, notes: r.notes,
       }, trx);
       await repo.addActivities([act(ctx, id, 'note', 'Imported from CSV')], trx);
@@ -300,7 +318,7 @@ export async function importLeads({ rows, skipDuplicates }, ctx) {
       ids.push(id);
     }
   });
-  return { created: ids.length, ids, skipped, errors };
+  return { created: ids.length, ids, skipped, errors, warnings };
 }
 
 /** Apply a stage change; records "Stage: A → B". */
