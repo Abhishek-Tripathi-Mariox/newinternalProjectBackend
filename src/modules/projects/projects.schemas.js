@@ -11,6 +11,8 @@ const optDay = z.union([day, z.literal('')]).optional();
 const priority = z.enum(['High', 'Medium', 'Low']);
 const hours = z.coerce.number().min(0).max(100000);
 const memberId = z.string().regex(MEMBER_ID);
+/** Milestone team: member ids, or {memberId, hours} to give each person their share of the milestone. */
+const msTeam = z.array(z.union([memberId, z.object({ memberId, hours: z.coerce.number().min(0).max(100000).default(0) })])).max(50);
 const clientEmail = z.union([z.string().trim().toLowerCase().email('Enter a valid client email').max(200), z.literal('')]);
 const link = z.object({ type: z.string().trim().min(1).max(40).default('Other'), url: z.string().max(2000).default('') });
 
@@ -48,7 +50,7 @@ export const milestoneInput = z.object({
   name: z.string().trim().max(200).default(''),
   dueDate: day,
   allocHours: hours.default(0),
-  team: z.array(memberId).max(50).optional(),
+  team: msTeam.optional(),
   notes: z.string().max(10000).optional(),
 });
 
@@ -106,6 +108,6 @@ export const updateMilestoneSchema = z.object({
   allocHours: hours,
   status: z.enum(MILESTONE_STATUSES),
   dueDate: day,
-  team: z.array(memberId).max(50),
+  team: msTeam,
   notes: z.string().max(10000),
 }).partial().refine((b) => Object.keys(b).length > 0, 'Nothing to update');

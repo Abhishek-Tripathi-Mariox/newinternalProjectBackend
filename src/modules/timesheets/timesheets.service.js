@@ -6,6 +6,24 @@ import { peopleScope, visibleProjectIds } from '../../core/scope.js';
 import { curMs, findMember, findMilestone } from '../tasks/tasks.repository.js';
 import * as repo from './timesheets.repository.js';
 import { addDays, monthOf, range, today, weekOf, workdaysSoFar } from './period.js';
+import { events as attendanceEvents } from '../workday/workday.repository.js';
+import { sumDay } from '../workday/attendance.domain.js';
+import { DAY, HOUR, fmtDur, parseDay } from '../workday/time.js';
+
+
+/**
+ * Time actually worked that day (check-in time minus breaks) and the internal-work hours already in
+ * that day's shift report — or null when the person has no attendance that day (no check-in to compare with).
+ */
+async function workedOn(q, memberId, day) {
+  const start = parseDay(day);
+  const evts = await attendanceEvents(q, [memberId], start, start + DAY);
+  if (!evts.some((e) => e.k === 'login')) return null;
+  const s = sumDay(evts, start, Date.now());
+  const rep = await q('shift_reports').where({ person_id: memberId, day }).first('internal_rows');
+  const internal = ((rep && rep.internal_rows) || []).reduce((x, r) => x + (Number(r.h) || 0), 0);
+  return { workH: s.work / HOUR, internal };
+}
 
 const iso = (v) => (v instanceof Date ? v.toISOString() : v || null);
 const r2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -126,6 +144,12 @@ export async function create(user, body) {
     await trx.raw('select pg_advisory_xact_lock(hashtext(?))', [`ts:${memberId}:${body.date}`]);
     const ex = await repo.dayTotal(trx, memberId, body.date);
     if (tot + ex > 24) throw unprocessable('That adds up to more than 24 hours for one day.');
+    // Logged hours may not exceed the time worked that day (check-in time minus breaks).
+    const w = await workedOn(trx, memberId, body.date);
+    if (w && tot + ex + w.internal > w.workH + 0.01) {
+      const left = Math.max(0, r2(w.workH - ex - w.internal));
+      throw unprocessable(`Only ${fmtDur(w.workH * HOUR)} was worked that day (check-in time minus breaks) and ${r2(ex + w.internal)}h is already logged — you can add at most ${left}h more.`);
+    }
     const ids = [];
     for (const r of rows) {
       const hours = Math.round(r.hours * 4) / 4;

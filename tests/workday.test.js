@@ -246,3 +246,24 @@ describe('PM and sales end-shift forms', () => {
     expect(r.body.error.message).toBe('Timers are for delivery staff.');
   });
 });
+
+describe('logged hours vs time worked', () => {
+  test('manual log hours cannot exceed check-in time minus breaks', async () => {
+    const pm = await as('pm@test.io'); // member mj
+    await pm.post(`${W}/check-in`);
+    await backdateDay('mj', 3 * 3600e3); // checked in 3h ago
+    await pm.post(`${W}/break`).send({ type: 'Lunch' });
+    // the break started 1h ago and has just ended → worked ≈ 2h
+    await db('attendance_events').where({ person_id: 'mj', kind: 'break' }).update({ at: db.raw("now() - interval '1 hour'") });
+    await pm.post(`${W}/break/end`);
+    const day = ymd(Date.now());
+    let r = await pm.post('/api/v1/time-logs').send({ memberId: 'mj', date: day, rows: [{ projectId: 'PR-101', hours: 3, note: 'x' }] });
+    expect(r.status).toBe(422);
+    expect(r.body.error.message).toMatch(/^Only 2h( \d+m)? was worked that day \(check-in time minus breaks\) and 0h is already logged — you can add at most 2h more\.$/);
+    r = await pm.post('/api/v1/time-logs').send({ memberId: 'mj', date: day, rows: [{ projectId: 'PR-101', hours: 1.5, note: 'x' }] });
+    expect(r.status).toBe(201);
+    r = await pm.post('/api/v1/time-logs').send({ memberId: 'mj', date: day, rows: [{ projectId: 'PR-101', hours: 1, note: 'y' }] });
+    expect(r.status).toBe(422);
+    expect(r.body.error.message).toMatch(/1\.5h is already logged — you can add at most 0\.5h more/);
+  });
+});

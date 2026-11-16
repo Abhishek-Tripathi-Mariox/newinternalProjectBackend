@@ -2,6 +2,8 @@
 import { db } from '../../db/knex.js';
 import { restrictTo } from '../../core/scope.js';
 import { unprocessable } from '../../core/errors.js';
+
+const fmtH = (x) => `${Math.round((+x || 0) * 10) / 10}h`;
 import { toProject, toMilestone, toMember, toLog } from './projects.mapper.js';
 
 const PROJECT_COLS = ['id', 'name', 'client', 'services', 'status', 'pm_member_id', 'start_date', 'due_date', 'value', 'hue', 'priority', 'brief', 'client_email', 'budget_hours',
@@ -35,7 +37,10 @@ async function attachTeamAndLinks(rows, q) {
 async function withTeams(rows, q) {
   if (!rows.length) return [];
   const mm = await q('milestone_members').whereIn('milestone_id', rows.map((r) => r.id)).orderBy('member_id');
-  return rows.map((r) => toMilestone(r, mm.filter((x) => x.milestone_id === r.id).map((x) => x.member_id)));
+  return rows.map((r) => {
+    const mine = mm.filter((x) => x.milestone_id === r.id);
+    return toMilestone(r, mine.map((x) => x.member_id), Object.fromEntries(mine.map((x) => [x.member_id, Number(x.alloc_hours) || 0])));
+  });
 }
 
 export async function findMilestones(projectIds, q = db) {
@@ -48,11 +53,29 @@ export async function findMilestone(id, q = db) {
   return r ? (await withTeams([r], q))[0] : null;
 }
 
+/** Normalise a milestone team input (ids or {memberId, hours}) → [{id, hours}] (last entry wins). */
+export function normTeam(list = []) {
+  const map = new Map();
+  for (const x of list) {
+    if (typeof x === 'string') map.set(x, map.has(x) ? map.get(x) : 0);
+    else map.set(x.memberId, Math.max(0, +x.hours || 0));
+  }
+  return [...map].map(([id, hours]) => ({ id, hours }));
+}
+
 /**
  * Replace a milestone's team. Members not yet on the project team join it (0 hours allocated).
+ * Each person's hours must add up to no more than the milestone's hours.
  */
-export async function setMilestoneTeam(q, projectId, milestoneId, memberIds) {
-  const ids = [...new Set(memberIds)];
+export async function setMilestoneTeam(q, projectId, milestoneId, team, msHours) {
+  const entries = normTeam(team);
+  const ids = entries.map((e) => e.id);
+  if (msHours != null) {
+    const sum = entries.reduce((x, e) => x + e.hours, 0);
+    if (sum > msHours + 1e-9) {
+      throw unprocessable(`Team hours (${fmtH(sum)}) are more than the milestone's ${fmtH(msHours)}. Reduce someone's hours or raise the milestone hours.`);
+    }
+  }
   if (ids.length) {
     const known = await q('members').whereIn('id', ids).pluck('id');
     const bad = ids.filter((x) => !known.includes(x));
@@ -65,7 +88,7 @@ export async function setMilestoneTeam(q, projectId, milestoneId, memberIds) {
     }
   }
   await q('milestone_members').where({ milestone_id: milestoneId }).del();
-  if (ids.length) await q('milestone_members').insert(ids.map((mid) => ({ milestone_id: milestoneId, member_id: mid })));
+  if (entries.length) await q('milestone_members').insert(entries.map((e) => ({ milestone_id: milestoneId, member_id: e.id, alloc_hours: e.hours })));
 }
 
 export async function findMembers(q = db) {

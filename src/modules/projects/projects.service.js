@@ -223,7 +223,7 @@ export async function create(user, b) {
     await trx('milestones').insert(ms.map((m) => ({
       id: `${pid}-M${m.n}`, project_id: pid, n: m.n, name: m.name, alloc_hours: m.allocHours, due_date: m.dueDate, status: 'Not started',
     })));
-    for (const m of ms) if (m.team && m.team.length) await repo.setMilestoneTeam(trx, pid, `${pid}-M${m.n}`, m.team);
+    for (const m of ms) if (m.team && m.team.length) await repo.setMilestoneTeam(trx, pid, `${pid}-M${m.n}`, m.team, m.allocHours);
     const links = cleanLinks(b.links);
     if (links.length) await trx('project_links').insert(links.map((l) => ({ project_id: pid, ...l })));
     return pid;
@@ -384,7 +384,7 @@ export async function addMilestone(user, pid, b) {
     while (ids.has(`${p.id}-M${k}`)) k += 1;
     const id = `${p.id}-M${k}`;
     await trx('milestones').insert({ id, project_id: p.id, n, name: b.name.trim() || `Milestone ${n}`, alloc_hours: Math.max(0, +b.allocHours || 0), due_date: b.dueDate, status: 'Not started', notes: (b.notes || '').trim() });
-    if (b.team && b.team.length) await repo.setMilestoneTeam(trx, p.id, id, b.team);
+    if (b.team && b.team.length) await repo.setMilestoneTeam(trx, p.id, id, b.team, Math.max(0, +b.allocHours || 0));
     return repo.findMilestone(id, trx);
   });
 }
@@ -426,7 +426,14 @@ export async function updateMilestone(user, mid, b) {
     if (b.dueDate !== undefined) row.due_date = b.dueDate;
     if (b.notes !== undefined) row.notes = b.notes.trim();
     if (Object.keys(row).length) await trx('milestones').where({ id: mid }).update(row);
-    if (b.team !== undefined) await repo.setMilestoneTeam(trx, p.id, mid, b.team);
+    const msHours = row.alloc_hours !== undefined ? row.alloc_hours : m.allocHours;
+    if (b.team !== undefined) await repo.setMilestoneTeam(trx, p.id, mid, b.team, msHours);
+    else if (row.alloc_hours !== undefined) {
+      const { s } = await trx('milestone_members').where({ milestone_id: mid }).sum('alloc_hours as s').first();
+      if ((Number(s) || 0) > msHours + 1e-9) {
+        throw unprocessable(`Milestone hours can’t be less than the hours given to its team (${hh(Number(s))}). Reduce someone's hours first.`);
+      }
+    }
     return repo.findMilestone(mid, trx);
   });
 }

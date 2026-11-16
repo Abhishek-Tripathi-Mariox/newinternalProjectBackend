@@ -176,3 +176,31 @@ describe('primary developer', () => {
     expect((await dev.put(`${API}/projects/${p.id}/members/vg`).send({ primary: false })).status).toBe(403);
   });
 });
+
+describe('hours per person inside a milestone', () => {
+  test('team hours are saved and cannot exceed the milestone hours', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.post(`${API}/projects`).send({
+      ...base, team: ['km', 'vg'], budgetHours: 100,
+      milestones: [{ name: 'API', dueDate: '2026-11-20', allocHours: 20, team: [{ memberId: 'km', hours: 12 }, { memberId: 'vg', hours: 8 }] }],
+    })).body.data;
+    const [m] = p.milestones;
+    expect(m.teamHours).toEqual({ km: 12, vg: 8 });
+
+    let res = await pm.patch(`${API}/milestones/${m.id}`).send({ team: [{ memberId: 'km', hours: 15 }, { memberId: 'vg', hours: 8 }] });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe("Team hours (23h) are more than the milestone's 20h. Reduce someone's hours or raise the milestone hours.");
+    res = await pm.patch(`${API}/milestones/${m.id}`).send({ allocHours: 25, team: [{ memberId: 'km', hours: 15 }, { memberId: 'vg', hours: 8 }] });
+    expect(res.status).toBe(200);
+    expect(res.body.data.teamHours).toEqual({ km: 15, vg: 8 });
+
+    res = await pm.patch(`${API}/milestones/${m.id}`).send({ allocHours: 20 });
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe("Milestone hours can’t be less than the hours given to its team (23h). Reduce someone's hours first.");
+
+    // plain ids still work (hours 0); add with per-person hours over the milestone is rejected
+    expect((await pm.patch(`${API}/milestones/${m.id}`).send({ team: ['km'] })).body.data.teamHours).toEqual({ km: 0 });
+    res = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'X', dueDate: '2026-12-20', allocHours: 5, team: [{ memberId: 'km', hours: 6 }] });
+    expect(res.status).toBe(422);
+  });
+});
