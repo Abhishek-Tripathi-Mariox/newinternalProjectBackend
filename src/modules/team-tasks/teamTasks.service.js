@@ -16,6 +16,7 @@ import { layout, esc } from '../../core/emailLayout.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../core/logger.js';
 import { peopleScope, visibleProjectIds } from '../../core/scope.js';
+import { documentsService } from '../documents/documents.service.js';
 
 const isBoss = (user) => user.isSuper || user.role.id === 'r-admin';
 
@@ -37,7 +38,7 @@ const day = (v) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-function toDto(r, user, team) {
+function toDto(r, user, team, attachments) {
   const manager = isBoss(user) || r.created_by === user.id || team.includes(r.assignee_id);
   return {
     id: r.id,
@@ -61,6 +62,7 @@ function toDto(r, user, team) {
     canEdit: manager,
     canDelete: manager,
     canUpdateStatus: manager || r.assignee_id === user.id,
+    attachments: attachments || [],
   };
 }
 
@@ -74,7 +76,8 @@ export async function list(query, user) {
   const p = pageParams(query, { defaultSize: 500, maxSize: 1000 });
   const rows = await scoped(baseQuery(), user, team).orderBy('t.created_at', 'desc').limit(p.limit).offset(p.offset);
   const [{ n }] = await scoped(db('team_tasks as t'), user, team).count({ n: '*' });
-  return { items: rows.map((r) => toDto(r, user, team)), meta: p.meta(Number(n)) };
+  const docs = await documentsService.listForMany('team_task', rows.map((r) => r.id));
+  return { items: rows.map((r) => toDto(r, user, team, docs[r.id])), meta: p.meta(Number(n)) };
 }
 
 async function readable(id, user, q = db) {
@@ -86,7 +89,32 @@ async function readable(id, user, q = db) {
 
 export async function get(id, user) {
   const { row, team } = await readable(id, user);
-  return toDto(row, user, team);
+  return toDto(row, user, team, await documentsService.listFor('team_task', id));
+}
+
+/** For document downloads / removal: null when the user can't see the task, else its rights. */
+export async function taskAccess(id, user) {
+  try {
+    const { row, team } = await readable(id, user);
+    const d = toDto(row, user, team);
+    return { canEdit: d.canEdit, canUpdateStatus: d.canUpdateStatus };
+  } catch {
+    return null;
+  }
+}
+
+/** Upload files to a task (multipart "files"): like edit / delete — whoever gave it or a manager above the assignee. */
+export async function addAttachments(id, files, user) {
+  try {
+    const { row, team } = await readable(id, user);
+    if (!toDto(row, user, team).canEdit) throw forbidden('Only the person who gave this task (or their manager) can add files to it.');
+    if (!files || !files.length) throw unprocessable('Pick at least one file.');
+    await documentsService.attach('team_task', id, files, user);
+  } catch (e) {
+    await documentsService.discard(files);
+    throw e;
+  }
+  return get(id, user);
 }
 
 /** People this user may give a task to: themself + their reportees (everyone for Super Admin / Admin). */
@@ -204,6 +232,8 @@ export async function remove(id, user) {
   await db.transaction(async (trx) => {
     const { row, team } = await readable(id, user, trx);
     if (!toDto(row, user, team).canDelete) throw forbidden('Only the person who gave this task (or their manager) can delete it.');
+    const cleanup = await documentsService.removeForEntity('team_task', id, trx);
     await trx('team_tasks').where({ id }).del();
-  });
+    return cleanup;
+  }).then((cleanup) => cleanup());
 }

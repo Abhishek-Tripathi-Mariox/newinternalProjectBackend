@@ -126,6 +126,8 @@ export function reportLines(r, projectName) {
   if (r.is_sales) {
     L.push(['Activity', `${r.calls} calls · ${r.meetings} meetings`]);
     if (r.outcome) L.push(['Summary', r.outcome]);
+    (r.lead_rows || []).forEach((x) => L.push([x.company || x.lead, `${x.kind}${x.note ? ` · ${x.note}` : ''}${x.next ? ` → next ${x.next}` : ''}`]));
+    if ((r.internal_rows || []).length) L.push(['Internal work', r.internal_rows.map((x) => `${x.cat} ${x.h}h${x.note ? ` (${x.note})` : ''}`).join(' · ')]);
   } else {
     if ((r.rows || []).length) L.push(['Hours', r.rows.map((x) => `${projectName(x.p) || ''} ${x.h}h${x.note ? ` (${x.note})` : ''}`).join(' · ')]);
     if ((r.internal_rows || []).length) L.push(['Internal work', r.internal_rows.map((x) => `${x.cat} ${x.h}h${x.note ? ` (${x.note})` : ''}`).join(' · ')]);

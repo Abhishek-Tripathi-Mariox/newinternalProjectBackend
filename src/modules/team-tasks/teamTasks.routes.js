@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../../middleware/validate.js';
+import { upload } from '../../middleware/upload.js';
 import { forbidden } from '../../core/errors.js';
 import * as s from './teamTasks.schemas.js';
 import * as ctrl from './teamTasks.controller.js';
@@ -14,6 +15,7 @@ router.get('/assignees', ctrl.assignees);
 router.post('/', validate({ body: s.createSchema }), ctrl.create);
 router.get('/:id', validate({ params: s.idParams }), ctrl.get);
 router.patch('/:id', validate({ params: s.idParams, body: s.updateSchema }), ctrl.update);
+router.post('/:id/attachments', upload.array('files', 10), validate({ params: s.idParams }), ctrl.addAttachments);
 router.delete('/:id', validate({ params: s.idParams }), ctrl.remove);
 
 export default router;

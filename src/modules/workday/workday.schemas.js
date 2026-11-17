@@ -29,6 +29,12 @@ export const endShiftSchema = z.object({
     h: hours,
     note: text(1000),
   })).max(20).optional().default([]),
+  leadRows: z.array(z.object({
+    lead: z.string().regex(/^MX-\d{1,9}$/, 'Pick a lead'),
+    kind: z.enum(['call', 'meeting', 'email', 'whatsapp', 'note']).default('call'),
+    note: text(1000),
+    next: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'), z.literal(''), z.null()]).optional().transform((v) => v || ''),
+  })).max(100).optional().default([]),
   pmRows: z.array(z.object({
     p: z.string().min(1).max(40),
     st: z.enum(['On track', 'At risk', 'Blocked']).default('On track'),

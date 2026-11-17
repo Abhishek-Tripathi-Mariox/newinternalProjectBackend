@@ -87,6 +87,27 @@ describe('team tasks', () => {
     expect((await (await as('dev@test.io')).post(API).send({ title: 'x', assigneeId: 'u-vg', leadId: 'MX-1002' })).status).toBe(422);
   });
 
+  test('attachments: only managers add / remove; the assignee downloads; outsiders get nothing', async () => {
+    const pm = await as('pm@test.io');
+    const t = (await pm.post(API).send({ title: 'With files', assigneeId: 'u-si' })).body.data;
+    expect(t.attachments).toEqual([]);
+    const dev2 = await as('dev2@test.io'); // assignee
+    expect((await dev2.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('hello'), 'notes.txt')).status).toBe(403);
+    let r = await pm.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('spec'), 'spec.pdf');
+    expect(r.status).toBe(201);
+    const [spec] = r.body.data.attachments;
+    // vg is above si → a manager of this task too
+    r = await (await as('dev@test.io')).post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('more'), 'more.txt');
+    expect(r.body.data.attachments.map((a) => a.name)).toEqual(['spec.pdf', 'more.txt']);
+    expect((await dev2.get(`/api/v1/documents/${spec.id}/download`)).status).toBe(200);
+    expect((await (await as('qa@test.io')).get(`/api/v1/documents/${spec.id}/download`)).status).toBe(404);
+    expect((await dev2.delete(`/api/v1/documents/${spec.id}`)).status).toBe(403);
+    expect((await pm.delete(`/api/v1/documents/${spec.id}`)).status).toBe(204);
+    // deleting the task removes its files
+    expect((await pm.delete(`${API}/${t.id}`)).status).toBe(204);
+    expect(Number((await db('documents').where({ entity_type: 'team_task', entity_id: t.id }).count({ n: '*' }).first()).n)).toBe(0);
+  });
+
   test('clients are blocked', async () => {
     expect((await (await as('client@test.io')).get(API)).status).toBe(403);
   });

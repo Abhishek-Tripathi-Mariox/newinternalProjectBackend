@@ -7,7 +7,7 @@
  */
 import { db } from '../../db/knex.js';
 import { nextId } from '../../core/ids.js';
-import { visibleProjectIds } from '../../core/scope.js';
+import { peopleScope, visibleProjectIds } from '../../core/scope.js';
 import { notFound, conflict, unprocessable } from '../../core/errors.js';
 import * as repo from './workday.repository.js';
 import { sumDay, EVL } from './attendance.domain.js';
@@ -231,6 +231,20 @@ export async function endShiftForm(user) {
       followUpsDone: `${fT.filter((f) => f.done).length} / ${fT.length}`,
       dueTomorrow: fus.filter((f) => !f.done && due(f) >= addDays(T, 1) && due(f) < addDays(T, 2)).length,
     };
+    // One row per lead worked today or with a follow-up due today / overdue (latest kind, next open follow-up).
+    const fusFull = await db('follow_ups').where({ owner_id: pid }).whereNotNull('lead_id').select('lead_id', 'due_at', 'done');
+    const ids = [];
+    const kindOf = {};
+    acts.filter((a) => a.leadId).sort((x, y) => x.t - y.t).forEach((a) => {
+      if (!ids.includes(a.leadId)) ids.push(a.leadId);
+      if (['call', 'meeting', 'email', 'whatsapp', 'note'].includes(a.kind)) kindOf[a.leadId] = a.kind;
+    });
+    fusFull.filter((f) => !f.done && due(f) < addDays(T, 1)).forEach((f) => { if (!ids.includes(f.lead_id)) ids.push(f.lead_id); });
+    const nextOf = (id) => {
+      const n = fusFull.filter((f) => f.lead_id === id && !f.done && due(f) >= addDays(T, 1)).map(due).sort((a, b) => a - b)[0];
+      return n ? ymd(sod(n)) : '';
+    };
+    form.leadRows = ids.slice(0, 40).map((id) => ({ lead: id, kind: kindOf[id] || 'call', note: '', next: nextOf(id) }));
     return form;
   }
   const [projects, team, todays] = await Promise.all([repo.projects(db), repo.projectTeam(db), repo.logsOn(db, ymd(T), pid)]);
@@ -256,6 +270,56 @@ export async function endShiftForm(user) {
   return form;
 }
 
+const KIND_LABEL = { call: 'Call', meeting: 'Meeting', email: 'Email', whatsapp: 'WhatsApp', note: 'Note' };
+
+/** Validate sales lead rows: leads must exist and be in the person's Leads scope; next date not in the past. */
+async function checkLeadRows(q, user, rows, T) {
+  const list = rows.filter((r) => r.lead && ((r.note || '').trim() || r.next));
+  if (!list.length) return [];
+  const ids = [...new Set(list.map((r) => r.lead))];
+  const leads = await q('leads').whereIn('id', ids).select('id', 'company', 'contact', 'owner_id');
+  const { people } = user.isSuper ? { people: null } : await peopleScope(user, 'leads');
+  for (const id of ids) {
+    const l = leads.find((x) => x.id === id);
+    if (!l || (people && !people.includes(l.owner_id))) throw unprocessable(`Lead ${id} isn't one of your leads.`);
+  }
+  const seen = new Set();
+  return list.filter((r) => { const k = `${r.lead}|${r.kind}|${r.note}|${r.next}`; if (seen.has(k)) return false; seen.add(k); return true; })
+    .map((r) => {
+      if (r.next && new Date(`${r.next}T12:00`).getTime() < T) throw unprocessable(`The next follow-up for ${r.lead} is in the past.`);
+      const l = leads.find((x) => x.id === r.lead);
+      return { lead: r.lead, company: l.company || l.contact || r.lead, kind: r.kind || 'call', note: (r.note || '').trim(), next: r.next || '' };
+    });
+}
+
+/**
+ * Write the lead rows into each lead's history ("End of day · Call: …") and schedule the next
+ * follow-up (a Call at 11:00 on that day) unless one is already open for that lead that day.
+ * Returns how many follow-ups were created.
+ */
+async function applyLeadRows(q, user, rows, now) {
+  let made = 0;
+  for (const r of rows) {
+    if (r.note) {
+      await q('lead_activities').insert({ lead_id: r.lead, kind: r.kind, text: `End of day · ${KIND_LABEL[r.kind] || 'Note'}: ${r.note}`, actor_user_id: user.id, at: new Date(now) });
+    }
+    if (r.next) {
+      const start = new Date(`${r.next}T00:00`);
+      const end = new Date(start.getTime() + 864e5);
+      const open = await q('follow_ups').where({ lead_id: r.lead, done: false }).where('due_at', '>=', start).where('due_at', '<', end).first('id');
+      if (!open) {
+        const fid = await nextId(q, 'followUp');
+        await q('follow_ups').insert({
+          id: fid, type: 'Call', title: `Follow up · ${r.company}`, lead_id: r.lead, owner_id: user.pid,
+          due_at: new Date(`${r.next}T11:00`), duration_min: 15, remind_min: 10, priority: 'Medium', notes: r.note || '', done: false, notified: false,
+        });
+        made++;
+      }
+    }
+  }
+  return made;
+}
+
 /**
  * Submit the end-of-shift report (frontend submitEndShift). Logged hours may not exceed time
  * worked today (attendance). Replaces today's time logs with the report rows, upserts the
@@ -272,10 +336,9 @@ export async function submitEndShift(user, m) {
     const sales = await isSalesPerson(q, pid);
     let rows = [];
     let ms = [];
-    let internal = [];
+    const internal = (m.internalRows || []).filter((r) => +r.h > 0);
     if (!sales) {
       rows = (m.rows || []).filter((r) => r.p && +r.h > 0);
-      internal = (m.internalRows || []).filter((r) => +r.h > 0);
       if (!rows.length && !internal.length) throw unprocessable('Add hours for at least one project or internal work.');
       const blank = internal.findIndex((r) => !(r.note || '').trim());
       if (blank >= 0) throw unprocessable(`Describe the internal work you did (row ${blank + 1}).`);
@@ -288,7 +351,15 @@ export async function submitEndShift(user, m) {
       const unknown = pids.filter((p) => !known.includes(p));
       if (unknown.length) throw unprocessable(`Unknown project: ${unknown.join(', ')}`);
       ms = await repo.milestonesOf(q, pids);
-    } else if (!m.outcome.trim()) throw unprocessable('Write a short summary of your day.');
+    } else {
+      if (!m.outcome.trim()) throw unprocessable('Write a short summary of your day.');
+      const blank = internal.findIndex((r) => !(r.note || '').trim());
+      if (blank >= 0) throw unprocessable(`Describe the internal work you did (row ${blank + 1}).`);
+      const ih = internal.reduce((x, r) => x + +r.h, 0);
+      if (ih > st.s.work / HOUR + 0.01) throw unprocessable(`Internal work is ${Math.round(ih * 100) / 100}h but you worked ${fmtDur(st.s.work)}. Reduce the hours.`);
+    }
+    // Sales: what was done per lead → lead history + the next follow-up.
+    const leadRows = sales ? await checkLeadRows(q, user, m.leadRows || [], T) : [];
 
     const msOk = (r) => r.ms && ms.some((x) => x.id === r.ms && x.project_id === r.p);
     const repRows = rows.map((r) => {
@@ -315,11 +386,13 @@ export async function submitEndShift(user, m) {
     await repo.upsertReport(q, {
       person_id: pid, day, is_sales: sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(),
       calls: +m.calls || 0, meetings: +m.meetings || 0, rows: JSON.stringify(repRows), pm_rows: JSON.stringify(pmRows), internal_rows: JSON.stringify(internalRows), submitted_at: new Date(now),
+      lead_rows: JSON.stringify(leadRows.map(({ company, ...r }) => ({ ...r, company }))),
     });
+    const fuMade = sales ? await applyLeadRows(q, user, leadRows, now) : 0;
     await repo.touchPresence(q, pid, now);
     return {
-      message: 'Report submitted · shift ended',
-      report: { who: pid, day, sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(), calls: +m.calls || 0, meetings: +m.meetings || 0, rows: repRows, pmRows, internal: internalRows },
+      message: `Report submitted · shift ended${fuMade ? ` · ${fuMade} follow-up${fuMade === 1 ? '' : 's'} scheduled` : ''}`,
+      report: { who: pid, day, sales, done: m.done.trim(), blockers: m.blockers.trim(), plan: m.plan.trim(), outcome: m.outcome.trim(), calls: +m.calls || 0, meetings: +m.meetings || 0, rows: repRows, pmRows, internal: internalRows, leadRows },
     };
   });
 }

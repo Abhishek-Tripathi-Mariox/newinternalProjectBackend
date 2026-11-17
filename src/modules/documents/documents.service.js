@@ -16,7 +16,7 @@ import { peopleScope, visibleProjectIds } from '../../core/scope.js';
 import { can } from '../../middleware/authorize.js';
 
 export const DOC_KINDS = ['SOW', 'FRD', 'BRD', 'NDA', 'Proposal', 'Contract / MSA', 'Wireframes', 'Invoice', 'Design specs', 'Other'];
-export const ENTITY_TYPES = ['lead', 'project', 'bug', 'cr'];
+export const ENTITY_TYPES = ['lead', 'project', 'bug', 'cr', 'team_task'];
 
 /** Guess the document kind from a file name (port of frontend domain/files.docKind). */
 export function docKind(name) {
@@ -152,6 +152,15 @@ async function checkAccess(doc, user, act) {
       const cr = await db('change_requests').where({ id: doc.entity_id }).first('project_id');
       if (!cr) throw notFound('Document');
       return projectVisible(cr.project_id);
+    }
+    case 'team_task': {
+      // Loaded lazily: team-tasks imports this module too.
+      const { taskAccess } = await import('../team-tasks/teamTasks.service.js');
+      const a = await taskAccess(doc.entity_id, user);
+      if (!a) throw notFound('Document');
+      // Changing / removing a file: the task's managers only (the assignee can download).
+      if (act !== 'v' && !a.canEdit) throw forbidden('Only the person who gave this task (or their manager) can remove its files.');
+      return;
     }
     default:
       throw notFound('Document');

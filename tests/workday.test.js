@@ -237,6 +237,7 @@ describe('PM and sales end-shift forms', () => {
     expect(f.calls).toBe(1);
     expect(f.auto).toMatchObject({ leadsTouched: 1, calls: 1, emails: 1, quotes: 0 });
     expect(f.auto.followUpsDone).toBe('0 / 0');
+    expect(f.leadRows).toEqual([{ lead: 'MX-1002', kind: 'email', note: '', next: '' }]);
     await se.post(`${W}/check-in`);
     let r = await se.post(`${W}/end-shift`).send({ outcome: ' ', calls: '1' });
     expect(r.status).toBe(422);
@@ -245,6 +246,37 @@ describe('PM and sales end-shift forms', () => {
     expect(r.status).toBe(200);
     expect(await db('shift_reports').where({ person_id: 'ps' }).first()).toMatchObject({ is_sales: true, calls: 3, meetings: 0, outcome: 'Good calls' });
     expect((await se.get(`${W}/me`)).body.data.status).toBe('Checked out');
+  });
+
+  test('sales lead rows → lead history + next follow-up; internal work; scope checked', async () => {
+    const sm = await as('sm@test.io'); // Aman (ak) owns MX-1001
+    await sm.post(`${W}/check-in`);
+    await db('attendance_events').where({ person_id: 'ak' }).update({ at: new Date(Date.now() - 3 * 3600e3) });
+    const d = new Date(Date.now() + 2 * 864e5);
+    const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    // someone else's lead is refused (Sales Executive with own scope)
+    const se = await as('se@test.io');
+    let r = await se.post(`${W}/end-shift`).send({ outcome: 'x', leadRows: [{ lead: 'MX-1001', kind: 'call', note: 'x' }] });
+    expect(r.status).toBe(422);
+    // internal work over time worked is refused; blank description too
+    r = await sm.post(`${W}/end-shift`).send({ outcome: 'Day', internalRows: [{ cat: 'Meeting', h: 5, note: 'Team sync' }] });
+    expect(r.body.error.message).toMatch(/^Internal work is 5h but you worked/);
+    r = await sm.post(`${W}/end-shift`).send({ outcome: 'Day', internalRows: [{ cat: 'Meeting', h: 1, note: ' ' }] });
+    expect(r.body.error.message).toBe('Describe the internal work you did (row 1).');
+    r = await sm.post(`${W}/end-shift`).send({
+      outcome: 'Moved Zenvy forward', calls: 2,
+      leadRows: [{ lead: 'MX-1001', kind: 'call', note: 'Asked for revised quote', next }],
+      internalRows: [{ cat: 'Meeting', h: 1, note: 'Sales team weekly review' }],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.data.message).toBe('Report submitted · shift ended · 1 follow-up scheduled');
+    const acts = await db('lead_activities').where({ lead_id: 'MX-1001' }).pluck('text');
+    expect(acts).toContain('End of day · Call: Asked for revised quote');
+    const fu = await db('follow_ups').where({ lead_id: 'MX-1001', done: false }).first();
+    expect(fu).toMatchObject({ type: 'Call', title: 'Follow up · Zenvy Retail', owner_id: 'ak' });
+    const rep = (await (await as('ceo@test.io')).get('/api/v1/shift-reports?person=ak')).body.data.at(-1);
+    expect(rep.leadRows).toEqual([{ lead: 'MX-1001', company: 'Zenvy Retail', kind: 'call', note: 'Asked for revised quote', next }]);
+    expect(rep.internal).toEqual([{ cat: 'Meeting', h: 1, note: 'Sales team weekly review' }]);
   });
 
   test('sales cannot run task timers', async () => {
