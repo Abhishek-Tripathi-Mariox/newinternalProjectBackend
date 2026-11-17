@@ -442,7 +442,10 @@ export async function updateMilestone(user, mid, b) {
     const msHours = row.alloc_hours !== undefined ? row.alloc_hours : m.allocHours;
     if (b.team !== undefined) await repo.setMilestoneTeam(trx, p.id, mid, b.team, msHours);
     else if (row.alloc_hours !== undefined) {
-      const { s } = await trx('milestone_members').where({ milestone_id: mid }).sum('alloc_hours as s').first();
+      const members = await trx('milestone_members').where({ milestone_id: mid }).select('member_id', 'alloc_hours');
+      // One person on the milestone: their hours follow the milestone's.
+      if (members.length === 1) await trx('milestone_members').where({ milestone_id: mid }).update({ alloc_hours: msHours });
+      const s = members.length === 1 ? msHours : members.reduce((x, r) => x + (Number(r.alloc_hours) || 0), 0);
       if ((Number(s) || 0) > msHours + 1e-9) {
         throw unprocessable(`Milestone hours can’t be less than the hours given to its team (${hh(Number(s))}). Reduce someone's hours first.`);
       }

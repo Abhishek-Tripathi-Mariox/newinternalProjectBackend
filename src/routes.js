@@ -11,6 +11,7 @@ import leadsRoutes from './modules/leads/leads.routes.js';
 import followUpsRoutes from './modules/followups/followups.routes.js';
 import projectIntegrationsRoutes from './modules/project-integrations/integrations.routes.js';
 import projectFollowUpsRoutes from './modules/project-followups/projectFollowups.routes.js';
+import teamTasksRoutes from './modules/team-tasks/teamTasks.routes.js';
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js';
 import documentsRoutes from './modules/documents/documents.routes.js';
 import projectsRoutes from './modules/projects/projects.routes.js';
@@ -41,6 +42,7 @@ export function apiRouter() {
   r.use('/leads', leadsRoutes);
   r.use('/follow-ups', followUpsRoutes);
   r.use('/project-follow-ups', projectFollowUpsRoutes);
+  r.use('/team-tasks', teamTasksRoutes);
   r.use('/project-integrations', projectIntegrationsRoutes);
   r.use('/dashboard', dashboardRoutes);
   r.use('/documents', documentsRoutes);

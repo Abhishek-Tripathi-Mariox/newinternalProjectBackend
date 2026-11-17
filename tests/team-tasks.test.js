@@ -1,0 +1,93 @@
+import { db } from '../src/db/knex.js';
+import { resetDb, as, closeDb } from './helpers.js';
+
+const API = '/api/v1/team-tasks';
+
+beforeAll(async () => {
+  await resetDb();
+  // mj (PM) → vg (dev) → si (dev2); dn (QA) reports to nobody.
+  await db('users').where({ id: 'u-vg' }).update({ reports_to: 'u-mj' });
+  await db('users').where({ id: 'u-si' }).update({ reports_to: 'u-vg' });
+});
+afterAll(closeDb);
+
+describe('team tasks', () => {
+  let tid;
+
+  test('assignees = self + everyone below (direct and indirect)', async () => {
+    const r = (await (await as('pm@test.io')).get(`${API}/assignees`)).body.data;
+    expect(r.map((x) => x.id).sort()).toEqual(['u-mj', 'u-si', 'u-vg']);
+    const qa = (await (await as('qa@test.io')).get(`${API}/assignees`)).body.data;
+    expect(qa.map((x) => x.id)).toEqual(['u-dn']);
+  });
+
+  test('a manager gives a task to someone two levels down', async () => {
+    const res = await (await as('pm@test.io')).post(API).send({ title: 'Prepare release notes', notes: 'For v2', priority: 'High', dueDate: '2026-12-01', assigneeId: 'u-si' });
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ title: 'Prepare release notes', status: 'To do', assigneeId: 'u-si', createdBy: 'u-mj', dueDate: '2026-12-01', canEdit: true });
+    tid = res.body.data.id;
+    expect(tid).toMatch(/^TT\d+$/);
+  });
+
+  test('cannot give tasks upward or sideways', async () => {
+    const dev2 = await as('dev2@test.io');
+    expect((await dev2.post(API).send({ title: 'x', assigneeId: 'u-vg' })).status).toBe(403);
+    expect((await (await as('qa@test.io')).post(API).send({ title: 'x', assigneeId: 'u-si' })).status).toBe(403);
+    expect((await dev2.post(API).send({ title: 'Self note', assigneeId: 'u-si' })).status).toBe(201);
+  });
+
+  test('visibility: assignee, creator, managers above; not outsiders', async () => {
+    const ids = async (email) => (await (await as(email)).get(API)).body.data.map((t) => t.id);
+    expect(await ids('dev2@test.io')).toContain(tid);
+    expect(await ids('dev@test.io')).toContain(tid); // vg is above si
+    expect(await ids('pm@test.io')).toContain(tid);
+    expect(await ids('qa@test.io')).not.toContain(tid);
+    expect(await ids('ceo@test.io')).toContain(tid);
+    expect((await (await as('qa@test.io')).get(`${API}/${tid}`)).status).toBe(404);
+  });
+
+  test('assignee updates status + progress note but not the task itself', async () => {
+    const dev2 = await as('dev2@test.io');
+    const r = await dev2.patch(`${API}/${tid}`).send({ status: 'Done', updateNote: 'Shared on Slack' });
+    expect(r.status).toBe(200);
+    expect(r.body.data).toMatchObject({ status: 'Done', updateNote: 'Shared on Slack', canEdit: false, canUpdateStatus: true });
+    expect(r.body.data.doneAt).toBeTruthy();
+    expect((await dev2.patch(`${API}/${tid}`).send({ title: 'Changed' })).status).toBe(403);
+    expect((await dev2.delete(`${API}/${tid}`)).status).toBe(403);
+  });
+
+  test('manager edits, reassigns within their team, deletes', async () => {
+    const pm = await as('pm@test.io');
+    const r = await pm.patch(`${API}/${tid}`).send({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'In progress' });
+    expect(r.body.data).toMatchObject({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'In progress', doneAt: null });
+    expect((await pm.patch(`${API}/${tid}`).send({ assigneeId: 'u-dn' })).status).toBe(403);
+    expect((await pm.delete(`${API}/${tid}`)).status).toBe(204);
+  });
+
+  test('optional project link (must be a project you can see)', async () => {
+    const pm = await as('pm@test.io');
+    const r = await pm.post(API).send({ title: 'Fix Alpha login copy', assigneeId: 'u-vg', projectId: 'PR-101' });
+    expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ projectId: 'PR-101', projectName: 'Alpha App' });
+    expect((await pm.patch(`${API}/${r.body.data.id}`).send({ projectId: null })).body.data.projectId).toBeNull();
+    expect((await pm.post(API).send({ title: 'x', assigneeId: 'u-vg', projectId: 'PR-999' })).status).toBe(422);
+    // dev (Team Member, own scope) is not on PR-102
+    expect((await (await as('dev@test.io')).post(API).send({ title: 'x', assigneeId: 'u-si', projectId: 'PR-102' })).status).toBe(422);
+  });
+
+  test('optional lead link for the sales team (must be a lead you can see)', async () => {
+    await db('users').where({ id: 'u-ps' }).update({ reports_to: 'u-ak' });
+    const sm = await as('sm@test.io');
+    const r = await sm.post(API).send({ title: 'Send proposal to Zenvy', assigneeId: 'u-ps', leadId: 'MX-1001' });
+    expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ leadId: 'MX-1001', leadName: 'Zenvy Retail', assigneeId: 'u-ps' });
+    expect((await (await as('se@test.io')).get(API)).body.data.map((t) => t.id)).toContain(r.body.data.id);
+    // Sales Executive (own leads) can't link someone else's lead; a dev without Leads access can't link any
+    expect((await (await as('se@test.io')).post(API).send({ title: 'x', assigneeId: 'u-ps', leadId: 'MX-1001' })).status).toBe(422);
+    expect((await (await as('dev@test.io')).post(API).send({ title: 'x', assigneeId: 'u-vg', leadId: 'MX-1002' })).status).toBe(422);
+  });
+
+  test('clients are blocked', async () => {
+    expect((await (await as('client@test.io')).get(API)).status).toBe(403);
+  });
+});

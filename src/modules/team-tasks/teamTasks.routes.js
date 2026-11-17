@@ -1,0 +1,19 @@
+import { Router } from 'express';
+import { validate } from '../../middleware/validate.js';
+import { forbidden } from '../../core/errors.js';
+import * as s from './teamTasks.schemas.js';
+import * as ctrl from './teamTasks.controller.js';
+
+/** /team-tasks — tasks given down the "Reports to" hierarchy (independent of projects). Staff only. */
+const router = Router();
+
+router.use((req, _res, next) => next(req.user?.role?.id === 'r-client' ? forbidden() : undefined));
+
+router.get('/', validate({ query: s.listQuery }), ctrl.list);
+router.get('/assignees', ctrl.assignees);
+router.post('/', validate({ body: s.createSchema }), ctrl.create);
+router.get('/:id', validate({ params: s.idParams }), ctrl.get);
+router.patch('/:id', validate({ params: s.idParams, body: s.updateSchema }), ctrl.update);
+router.delete('/:id', validate({ params: s.idParams }), ctrl.remove);
+
+export default router;

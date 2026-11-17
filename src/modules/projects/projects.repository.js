@@ -69,6 +69,8 @@ export function normTeam(list = []) {
  */
 export async function setMilestoneTeam(q, projectId, milestoneId, team, msHours) {
   const entries = normTeam(team);
+  // One person on the milestone gets all of its hours.
+  if (entries.length === 1 && msHours != null) entries[0].hours = Math.max(0, +msHours || 0);
   const ids = entries.map((e) => e.id);
   if (msHours != null) {
     const sum = entries.reduce((x, e) => x + e.hours, 0);

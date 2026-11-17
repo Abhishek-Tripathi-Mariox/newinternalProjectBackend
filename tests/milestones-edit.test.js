@@ -198,9 +198,14 @@ describe('hours per person inside a milestone', () => {
     expect(res.status).toBe(422);
     expect(res.body.error.message).toBe("Milestone hours can’t be less than the hours given to its team (23h). Reduce someone's hours first.");
 
-    // plain ids still work (hours 0); add with per-person hours over the milestone is rejected
-    expect((await pm.patch(`${API}/milestones/${m.id}`).send({ team: ['km'] })).body.data.teamHours).toEqual({ km: 0 });
+    // one person on a milestone gets all of its hours, and follows later changes of the milestone hours
+    expect((await pm.patch(`${API}/milestones/${m.id}`).send({ team: ['km'] })).body.data.teamHours).toEqual({ km: 25 });
+    expect((await pm.patch(`${API}/milestones/${m.id}`).send({ allocHours: 18 })).body.data.teamHours).toEqual({ km: 18 });
     res = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'X', dueDate: '2026-12-20', allocHours: 5, team: [{ memberId: 'km', hours: 6 }] });
+    expect(res.status).toBe(201);
+    expect(res.body.data.teamHours).toEqual({ km: 5 });
+    // two people: over the milestone is still rejected
+    res = await pm.post(`${API}/projects/${p.id}/milestones`).send({ name: 'Y', dueDate: '2026-12-20', allocHours: 5, team: [{ memberId: 'km', hours: 4 }, { memberId: 'vg', hours: 2 }] });
     expect(res.status).toBe(422);
   });
 });
