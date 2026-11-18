@@ -65,6 +65,7 @@ export const createProjectSchema = z.object({
   pmId: memberId.optional(),
   startDate: optDay,
   dueDate: optDay,
+  expectedDate: optDay,
   budgetHours: hours.default(0),
   team: z.array(memberId).max(100).default([]),
   primaryTeam: z.array(memberId).max(100).default([]), // primary developers (subset of the team)
@@ -86,6 +87,7 @@ export const updateProjectSchema = z.object({
   pmId: memberId,
   startDate: day,
   dueDate: day,
+  expectedDate: z.union([day, z.literal(''), z.null()]), // '' / null = clear
   value: z.coerce.number().min(0).max(1e12),
   priority,
   brief: z.string().max(10000),

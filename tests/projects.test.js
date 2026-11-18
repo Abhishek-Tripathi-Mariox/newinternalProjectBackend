@@ -141,6 +141,21 @@ describe('PM-only edits', () => {
     expect(res.body.data).toMatchObject({ status: 'On hold', priority: 'Low' });
   });
 
+  test('expected delivery date: set, validate, clear', async () => {
+    const pm = await as('pm@test.io');
+    const p = (await pm.get('/api/v1/projects/PR-101')).body.data;
+    expect(p.expectedDate).toBeNull();
+    const exp = addDaysS(p.dueDate, 10);
+    let res = await pm.patch('/api/v1/projects/PR-101').send({ expectedDate: exp });
+    expect(res.status).toBe(200);
+    expect(res.body.data.expectedDate).toBe(exp);
+    res = await pm.patch('/api/v1/projects/PR-101').send({ expectedDate: addDaysS(p.startDate, -1) });
+    expect(res.status).toBe(422);
+    res = await pm.patch('/api/v1/projects/PR-101').send({ expectedDate: '' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.expectedDate).toBeNull();
+  });
+
   test('members: alloc with over-budget warning, add, remove', async () => {
     const pm = await as('pm@test.io');
     // PR-102 budget 40h; team alloc 120h is already over → no warning while it stays over

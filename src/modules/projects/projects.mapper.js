@@ -16,6 +16,7 @@ export function toProject(r, team = [], links = []) {
     pmId: r.pm_member_id,
     startDate: r.start_date,
     dueDate: r.due_date,
+    expectedDate: r.expected_delivery_date || null, // when the team now expects to deliver
     value: num(r.value),
     hue: r.hue,
     priority: r.priority,

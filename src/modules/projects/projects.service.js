@@ -199,6 +199,7 @@ export async function create(user, b) {
   if (err) throw unprocessable(err);
 
   const custom = Array.isArray(b.milestones) && b.milestones.length > 0;
+  if (b.expectedDate && b.expectedDate < b.startDate) throw unprocessable('The expected delivery date can’t be before the project start date.');
   if (custom && b.milestones.some((m) => m.dueDate < b.startDate)) throw unprocessable('Milestone due dates can’t be before the project start date.');
   const msTotal = custom ? b.milestones.reduce((x, m) => x + (+m.allocHours || 0), 0) : 0;
   const given = Math.max(0, +b.budgetHours || 0);
@@ -212,7 +213,7 @@ export async function create(user, b) {
     await assertMembers(team, trx);
     const pid = await nextId(trx, 'project');
     await trx('projects').insert({
-      id: pid, name: b.name.trim(), client: b.client.trim(), services, status: b.status, pm_member_id: pm, start_date: b.startDate, due_date: b.dueDate,
+      id: pid, name: b.name.trim(), client: b.client.trim(), services, status: b.status, pm_member_id: pm, start_date: b.startDate, due_date: b.dueDate, expected_delivery_date: b.expectedDate || null,
       value: +b.value || 0, hue: Math.floor(Math.random() * 360), priority: b.priority || 'Medium', brief: (b.brief || '').trim(),
       client_email: (b.clientEmail || '').trim().toLowerCase() || null,
       budget_hours: budget > 0 ? budget : null, // no budget given → no limit until one is set
@@ -247,6 +248,10 @@ export async function update(user, id, b) {
     const row = {};
     for (const [k, col] of Object.entries(PATCH_COLS)) if (b[k] !== undefined) row[col] = typeof b[k] === 'string' ? b[k].trim() : b[k];
     if (row.client_email === '') row.client_email = null;
+    if (b.expectedDate !== undefined) {
+      if (b.expectedDate && b.expectedDate < start) throw unprocessable('The expected delivery date can’t be before the project start date.');
+      row.expected_delivery_date = b.expectedDate || null;
+    }
     // Why on hold / delayed: a reason is required when a project is put on hold.
     const reason = b.statusReason !== undefined ? b.statusReason : p.statusReason;
     if (b.status === 'On hold' && p.status !== 'On hold' && !reason) throw unprocessable('Pick why the project is on hold (client end, third party…).');
