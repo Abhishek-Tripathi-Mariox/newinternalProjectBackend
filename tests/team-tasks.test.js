@@ -22,9 +22,9 @@ describe('team tasks', () => {
   });
 
   test('a manager gives a task to someone two levels down', async () => {
-    const res = await (await as('pm@test.io')).post(API).send({ title: 'Prepare release notes', notes: 'For v2', priority: 'High', dueDate: '2026-12-01', assigneeId: 'u-si' });
+    const res = await (await as('pm@test.io')).post(API).send({ title: 'Prepare release notes', notes: 'For v2', priority: 'High', dueDate: '2026-12-01', estimateHours: 4.5, assigneeId: 'u-si' });
     expect(res.status).toBe(201);
-    expect(res.body.data).toMatchObject({ title: 'Prepare release notes', status: 'To do', assigneeId: 'u-si', createdBy: 'u-mj', dueDate: '2026-12-01', canEdit: true });
+    expect(res.body.data).toMatchObject({ title: 'Prepare release notes', status: 'To do', assigneeId: 'u-si', createdBy: 'u-mj', dueDate: '2026-12-01', estimateHours: 4.5, canEdit: true });
     tid = res.body.data.id;
     expect(tid).toMatch(/^TT\d+$/);
   });
@@ -87,12 +87,16 @@ describe('team tasks', () => {
     expect((await (await as('dev@test.io')).post(API).send({ title: 'x', assigneeId: 'u-vg', leadId: 'MX-1002' })).status).toBe(422);
   });
 
-  test('attachments: only managers add / remove; the assignee downloads; outsiders get nothing', async () => {
+  test('attachments: managers and the assignee add; the assignee removes only their own; outsiders get nothing', async () => {
     const pm = await as('pm@test.io');
     const t = (await pm.post(API).send({ title: 'With files', assigneeId: 'u-si' })).body.data;
     expect(t.attachments).toEqual([]);
     const dev2 = await as('dev2@test.io'); // assignee
-    expect((await dev2.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('hello'), 'notes.txt')).status).toBe(403);
+    const own = await dev2.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('hello'), 'notes.txt');
+    expect(own.status).toBe(201);
+    const [mine] = own.body.data.attachments;
+    expect((await (await as('qa@test.io')).post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('x'), 'x.txt')).status).toBe(404);
+    expect((await dev2.delete(`/api/v1/documents/${mine.id}`)).status).toBe(204);
     let r = await pm.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('spec'), 'spec.pdf');
     expect(r.status).toBe(201);
     const [spec] = r.body.data.attachments;

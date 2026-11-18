@@ -158,8 +158,9 @@ async function checkAccess(doc, user, act) {
       const { taskAccess } = await import('../team-tasks/teamTasks.service.js');
       const a = await taskAccess(doc.entity_id, user);
       if (!a) throw notFound('Document');
-      // Changing / removing a file: the task's managers only (the assignee can download).
-      if (act !== 'v' && !a.canEdit) throw forbidden('Only the person who gave this task (or their manager) can remove its files.');
+      // Changing / removing a file: the task's managers, or the assignee for files they added themselves.
+      const own = a.canUpdateStatus && doc.uploaded_by === user.id;
+      if (act !== 'v' && !a.canEdit && !own) throw forbidden('You can only remove files you added — the person who gave this task (or their manager) can remove the rest.');
       return;
     }
     default:

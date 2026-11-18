@@ -7,6 +7,7 @@ export const TT_PRIORITIES = ['High', 'Medium', 'Low'];
 const USER_ID = z.string().regex(/^u-[a-z0-9-]{1,40}$/i, 'Pick who this task is for');
 const projectId = z.union([z.string().regex(/^PR-\d{1,9}$/, 'Pick a project'), z.literal(''), z.null()]).optional();
 const leadId = z.union([z.string().regex(/^MX-\d{1,9}$/, 'Pick a lead'), z.literal(''), z.null()]).optional();
+const estimate = z.union([z.coerce.number().min(0, 'Hours can’t be negative').max(1000, 'Keep the estimate under 1000h'), z.literal(''), z.null()]).optional();
 const due = z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'), z.literal(''), z.null()]).optional();
 
 export const idParams = z.object({ id: z.string().regex(TT_ID, 'Invalid task id') });
@@ -22,6 +23,7 @@ export const createSchema = z.object({
   priority: z.enum(TT_PRIORITIES).optional(),
   status: z.enum(TT_STATUSES).optional(),
   dueDate: due,
+  estimateHours: estimate,
   projectId,
   leadId,
   assigneeId: USER_ID,
@@ -33,6 +35,7 @@ export const updateSchema = z.object({
   priority: z.enum(TT_PRIORITIES).optional(),
   status: z.enum(TT_STATUSES).optional(),
   dueDate: due,
+  estimateHours: estimate,
   projectId,
   leadId,
   assigneeId: USER_ID.optional(),

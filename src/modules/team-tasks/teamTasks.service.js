@@ -38,6 +38,19 @@ const day = (v) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Estimated hours: '' / null / 0 → not set. */
+const estValue = (v) => (v === '' || v == null || !(+v > 0) ? null : Math.round(+v * 100) / 100);
+
+/** Adds uploaderName to each attachment (who added the file). */
+async function withUploaders(docs) {
+  const all = [].concat(...Object.values(docs));
+  const ids = [...new Set(all.map((d) => d.uploadedBy).filter(Boolean))];
+  if (!ids.length) return docs;
+  const names = Object.fromEntries((await db('users').whereIn('id', ids).select('id', 'name')).map((u) => [u.id, u.name]));
+  all.forEach((d) => { d.uploaderName = names[d.uploadedBy] || null; });
+  return docs;
+}
+
 function toDto(r, user, team, attachments) {
   const manager = isBoss(user) || r.created_by === user.id || team.includes(r.assignee_id);
   return {
@@ -47,6 +60,7 @@ function toDto(r, user, team, attachments) {
     priority: r.priority,
     status: r.status,
     dueDate: day(r.due_date),
+    estimateHours: r.estimate_hours == null ? null : Number(r.estimate_hours),
     projectId: r.project_id || null,
     projectName: r.project_name || null,
     leadId: r.lead_id || null,
@@ -76,7 +90,7 @@ export async function list(query, user) {
   const p = pageParams(query, { defaultSize: 500, maxSize: 1000 });
   const rows = await scoped(baseQuery(), user, team).orderBy('t.created_at', 'desc').limit(p.limit).offset(p.offset);
   const [{ n }] = await scoped(db('team_tasks as t'), user, team).count({ n: '*' });
-  const docs = await documentsService.listForMany('team_task', rows.map((r) => r.id));
+  const docs = await withUploaders(await documentsService.listForMany('team_task', rows.map((r) => r.id)));
   return { items: rows.map((r) => toDto(r, user, team, docs[r.id])), meta: p.meta(Number(n)) };
 }
 
@@ -89,7 +103,8 @@ async function readable(id, user, q = db) {
 
 export async function get(id, user) {
   const { row, team } = await readable(id, user);
-  return toDto(row, user, team, await documentsService.listFor('team_task', id));
+  const docs = await withUploaders({ [id]: await documentsService.listFor('team_task', id) });
+  return toDto(row, user, team, docs[id]);
 }
 
 /** For document downloads / removal: null when the user can't see the task, else its rights. */
@@ -103,11 +118,11 @@ export async function taskAccess(id, user) {
   }
 }
 
-/** Upload files to a task (multipart "files"): like edit / delete — whoever gave it or a manager above the assignee. */
+/** Upload files to a task (multipart "files"): the assignee, whoever gave it, or a manager above the assignee. */
 export async function addAttachments(id, files, user) {
   try {
     const { row, team } = await readable(id, user);
-    if (!toDto(row, user, team).canEdit) throw forbidden('Only the person who gave this task (or their manager) can add files to it.');
+    if (!toDto(row, user, team).canUpdateStatus) throw forbidden('Only the assignee, the person who gave this task or their manager can add files to it.');
     if (!files || !files.length) throw unprocessable('Pick at least one file.');
     await documentsService.attach('team_task', id, files, user);
   } catch (e) {
@@ -162,7 +177,7 @@ function notify(assignee, task, by) {
   if (!mailEnabled() || !assignee.email || assignee.id === by.id) return;
   const link = `${config.appUrl}/team-tasks`;
   const body = `<p><b>${esc(task.title)}</b>${task.projectName ? ` · ${esc(task.projectName)}` : ''}${task.leadName ? ` · Lead: ${esc(task.leadName)}` : ''}</p>${task.notes ? `<p style="white-space:pre-wrap">${esc(task.notes)}</p>` : ''}`
-    + `<p>Priority: ${esc(task.priority)}${task.dueDate ? ` · Due: ${esc(task.dueDate)}` : ''}</p>`;
+    + `<p>Priority: ${esc(task.priority)}${task.dueDate ? ` · Due: ${esc(task.dueDate)}` : ''}${task.estimateHours ? ` · Estimate: ${task.estimateHours}h` : ''}</p>`;
   sendMail({
     to: assignee.email,
     subject: `New task from ${by.name}: ${task.title}`,
@@ -183,6 +198,7 @@ export async function create(b, user) {
       priority: b.priority || 'Medium',
       status,
       due_date: dueValue(b.dueDate),
+      estimate_hours: estValue(b.estimateHours),
       project_id: await projectValue(user, b.projectId, trx),
       lead_id: await leadValue(user, b.leadId, trx),
       assignee_id: a.id,
@@ -201,7 +217,7 @@ export async function update(id, b, user) {
   await db.transaction(async (trx) => {
     const { row, team } = await readable(id, user, trx);
     const dto = toDto(row, user, team);
-    const managerFields = ['title', 'notes', 'priority', 'dueDate', 'assigneeId', 'projectId', 'leadId'].filter((k) => b[k] !== undefined);
+    const managerFields = ['title', 'notes', 'priority', 'dueDate', 'estimateHours', 'assigneeId', 'projectId', 'leadId'].filter((k) => b[k] !== undefined);
     if (managerFields.length && !dto.canEdit) throw forbidden('Only the person who gave this task (or their manager) can change it — you can update its status and progress note.');
     if ((b.status !== undefined || b.updateNote !== undefined) && !dto.canUpdateStatus) throw forbidden('You can’t update this task.');
     const patch = {};
@@ -209,6 +225,7 @@ export async function update(id, b, user) {
     if (b.notes !== undefined) patch.notes = b.notes;
     if (b.priority !== undefined) patch.priority = b.priority;
     if (b.dueDate !== undefined) patch.due_date = dueValue(b.dueDate);
+    if (b.estimateHours !== undefined) patch.estimate_hours = estValue(b.estimateHours);
     if (b.updateNote !== undefined) patch.update_note = b.updateNote;
     if (b.projectId !== undefined && (b.projectId || null) !== row.project_id) patch.project_id = await projectValue(user, b.projectId, trx);
     if (b.leadId !== undefined && (b.leadId || null) !== row.lead_id) patch.lead_id = await leadValue(user, b.leadId, trx);
