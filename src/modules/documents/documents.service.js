@@ -39,6 +39,7 @@ export const toDocument = (r) => ({
   entityType: r.entity_type,
   entityId: r.entity_id,
   name: r.name,
+  title: r.title || '',
   size: Number(r.size),
   mime: r.mime,
   kind: r.kind,
@@ -71,10 +72,12 @@ const discard = (files) => removeObjects((files || []).map((f) => f.key));
  * @param {Array<{originalname:string,size:number,mimetype:string,key:string}>} files uploaded files (req.files)
  * @param {{id:string}} user principal (uploaded_by)
  * @param {import('knex').Knex} [trx] transaction / knex (default: db)
+ * @param {{title?:string}} [opts] optional title stored on every file of this upload
  * @returns {Promise<object[]>} document DTOs
  * The caller checks permissions on the entity first. On failure, call documentsService.discard(files).
  */
-async function attach(entityType, entityId, files, user, trx = db) {
+async function attach(entityType, entityId, files, user, trx = db, opts = {}) {
+  const title = String(opts.title || '').trim().slice(0, 200) || null;
   if (!files || !files.length) return [];
   const rows = files.map((f) => ({
     entity_type: entityType,
@@ -85,6 +88,7 @@ async function attach(entityType, entityId, files, user, trx = db) {
     kind: docKind(f.originalname),
     storage_path: f.key,
     uploaded_by: user ? user.id : null,
+    title,
   }));
   const inserted = await trx('documents').insert(rows).returning('*');
   return inserted.map(toDocument);

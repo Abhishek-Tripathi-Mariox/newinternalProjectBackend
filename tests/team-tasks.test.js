@@ -92,8 +92,9 @@ describe('team tasks', () => {
     const t = (await pm.post(API).send({ title: 'With files', assigneeId: 'u-si' })).body.data;
     expect(t.attachments).toEqual([]);
     const dev2 = await as('dev2@test.io'); // assignee
-    const own = await dev2.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('hello'), 'notes.txt');
+    const own = await dev2.post(`${API}/${t.id}/attachments`).field('title', 'My progress notes').attach('files', Buffer.from('hello'), 'notes.txt');
     expect(own.status).toBe(201);
+    expect(own.body.data.attachments[0]).toMatchObject({ title: 'My progress notes', uploadedBy: 'u-si', uploaderName: expect.any(String) });
     const [mine] = own.body.data.attachments;
     expect((await (await as('qa@test.io')).post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('x'), 'x.txt')).status).toBe(404);
     expect((await dev2.delete(`/api/v1/documents/${mine.id}`)).status).toBe(204);
@@ -110,6 +111,46 @@ describe('team tasks', () => {
     // deleting the task removes its files
     expect((await pm.delete(`${API}/${t.id}`)).status).toBe(204);
     expect(Number((await db('documents').where({ entity_type: 'team_task', entity_id: t.id }).count({ n: '*' }).first()).n)).toBe(0);
+  });
+
+  test('role permission (Team tasks): View / Create / Edit / Delete and scope', async () => {
+    const setTT = async (roleId, tt) => {
+      const r = await db('roles').where({ id: roleId }).first('perms');
+      await db('roles').where({ id: roleId }).update({ perms: JSON.stringify({ ...r.perms, tt }) });
+    };
+    const pm = await as('pm@test.io');
+    const t = (await pm.post(API).send({ title: 'Perm probe', assigneeId: 'u-si' })).body.data;
+    const vg = await as('dev@test.io'); // r-tm, manager of si
+    try {
+      // No View → the whole module is closed.
+      await setTT('r-tm', { v: false, c: false, e: false, d: false, scope: 'team' });
+      expect((await vg.get(API)).status).toBe(403);
+      // View only: sees the team's task but can't give, edit or delete.
+      await setTT('r-tm', { v: true, c: false, e: false, d: false, scope: 'team' });
+      const seen = (await vg.get(API)).body.data.find((x) => x.id === t.id);
+      expect(seen).toMatchObject({ canEdit: false, canDelete: false });
+      expect((await vg.post(API).send({ title: 'x', assigneeId: 'u-vg' })).status).toBe(403);
+      expect((await vg.get(`${API}/assignees`)).body.data).toEqual([]);
+      expect((await vg.patch(`${API}/${t.id}`).send({ title: 'nope' })).status).toBe(403);
+      expect((await vg.delete(`${API}/${t.id}`)).status).toBe(403);
+      // Own scope: the team's task disappears; can only give tasks to themself.
+      await setTT('r-tm', { v: true, c: true, e: true, d: true, scope: 'own' });
+      expect((await vg.get(API)).body.data.some((x) => x.id === t.id)).toBe(false);
+      expect((await vg.post(API).send({ title: 'x', assigneeId: 'u-si' })).status).toBe(403);
+      expect((await vg.post(API).send({ title: 'Mine', assigneeId: 'u-vg' })).status).toBe(201);
+      // The assignee still updates status with View only.
+      await setTT('r-tm', { v: true, c: false, e: false, d: false, scope: 'own' });
+      const si = await as('dev2@test.io');
+      expect((await si.patch(`${API}/${t.id}`).send({ status: 'In progress' })).status).toBe(200);
+      // All scope: QA sees every task and can give tasks to anyone.
+      await setTT('r-qa', { v: true, c: true, e: true, d: true, scope: 'all' });
+      const qa = await as('qa@test.io');
+      expect((await qa.get(API)).body.data.some((x) => x.id === t.id)).toBe(true);
+      expect((await qa.post(API).send({ title: 'From QA', assigneeId: 'u-mj' })).status).toBe(201);
+    } finally {
+      await setTT('r-tm', { v: true, c: true, e: true, d: true, scope: 'team' });
+      await setTT('r-qa', { v: true, c: true, e: true, d: true, scope: 'team' });
+    }
   });
 
   test('clients are blocked', async () => {

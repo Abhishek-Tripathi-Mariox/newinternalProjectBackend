@@ -1,10 +1,12 @@
 /**
- * Team tasks — independent of projects. A person can give a task to themself or to anyone below
- * them in the "Reports to" hierarchy (direct or indirect); Super Admin and Admin can give tasks to
- * anyone. Who sees a task: the assignee, whoever created it, anyone above the assignee in the
- * hierarchy, and Super Admin / Admin.
- * - Creator, a manager above the assignee, Super Admin / Admin: edit everything, delete.
- * - The assignee (only): change status and write a progress note.
+ * Team tasks — independent of projects. Rights come from the role's `tt` (Team tasks) permission:
+ * - scope All: sees every task and can give tasks to anyone.
+ * - scope Team: sees tasks assigned to / created by them and tasks of people below them in
+ *   "Reports to" (direct or indirect); gives tasks to themself or those people.
+ * - scope Own: only tasks assigned to / created by them; gives tasks to themself only.
+ * Create = give tasks. A task's managers (creator, someone above the assignee, scope All) edit it
+ * with Edit and delete it with Delete. The assignee can always change status, write a progress
+ * note and add their own files.
  */
 import { db } from '../../db/knex.js';
 import { nextId } from '../../core/ids.js';
@@ -18,10 +20,13 @@ import { logger } from '../../core/logger.js';
 import { peopleScope, visibleProjectIds } from '../../core/scope.js';
 import { documentsService } from '../documents/documents.service.js';
 
-const isBoss = (user) => user.isSuper || user.role.id === 'r-admin';
+const FULL = { v: true, c: true, e: true, d: true, scope: 'all' };
+/** The user's Team tasks permission ({v,c,e,d,scope}); Super Admin = everything. */
+export const ttPerm = (user) => (user.isSuper ? FULL : ((user.role.perms || {}).tt || { v: false, c: false, e: false, d: false, scope: 'own' }));
+const isBoss = (user) => ttPerm(user).scope === 'all';
 
-/** Ids of the people `user` manages (below them in "Reports to"). */
-const teamIds = async (user) => (user.reportees || (await reporteesOf(user.id))).map((r) => r.id);
+/** Ids of the people `user` manages (below them in "Reports to"); none with scope Own. */
+const teamIds = async (user) => (ttPerm(user).scope === 'own' ? [] : (user.reportees || (await reporteesOf(user.id))).map((r) => r.id));
 
 const baseQuery = (q = db) => q('team_tasks as t')
   .join('users as a', 'a.id', 't.assignee_id')
@@ -73,9 +78,9 @@ function toDto(r, user, team, attachments) {
     doneAt: iso(r.done_at),
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
-    canEdit: manager,
-    canDelete: manager,
-    canUpdateStatus: manager || r.assignee_id === user.id,
+    canEdit: manager && !!ttPerm(user).e,
+    canDelete: manager && !!ttPerm(user).d,
+    canUpdateStatus: (manager && !!ttPerm(user).e) || r.assignee_id === user.id,
     attachments: attachments || [],
   };
 }
@@ -119,12 +124,13 @@ export async function taskAccess(id, user) {
 }
 
 /** Upload files to a task (multipart "files"): the assignee, whoever gave it, or a manager above the assignee. */
-export async function addAttachments(id, files, user) {
+export async function addAttachments(id, files, user, title = '') {
   try {
     const { row, team } = await readable(id, user);
     if (!toDto(row, user, team).canUpdateStatus) throw forbidden('Only the assignee, the person who gave this task or their manager can add files to it.');
     if (!files || !files.length) throw unprocessable('Pick at least one file.');
-    await documentsService.attach('team_task', id, files, user);
+    if (String(title || '').length > 200) throw unprocessable('Keep the file title under 200 characters.');
+    await documentsService.attach('team_task', id, files, user, db, { title });
   } catch (e) {
     await documentsService.discard(files);
     throw e;
@@ -134,12 +140,13 @@ export async function addAttachments(id, files, user) {
 
 /** People this user may give a task to: themself + their reportees (everyone for Super Admin / Admin). */
 export async function assignees(user) {
+  if (!ttPerm(user).c) return [];
   if (isBoss(user)) {
     const rows = await db('users as u').join('roles as r', 'r.id', 'u.role_id').where('u.status', 'Active').whereNot('u.role_id', 'r-client')
       .orderBy('u.name').select('u.id', 'u.name', 'r.name as role');
     return rows.map((r) => ({ id: r.id, name: r.name, role: r.role, self: r.id === user.id }));
   }
-  const team = user.reportees || (await reporteesOf(user.id));
+  const team = ttPerm(user).scope === 'own' ? [] : user.reportees || (await reporteesOf(user.id));
   return [{ id: user.id, name: user.name, role: user.role.name, self: true }].concat(team.map((r) => ({ id: r.id, name: r.name, role: r.role, self: false })));
 }
 
@@ -147,7 +154,7 @@ async function checkAssignee(user, assigneeId, q = db) {
   const u = await q('users').where({ id: assigneeId }).first('id', 'name', 'email', 'status', 'role_id');
   if (!u || u.status !== 'Active' || u.role_id === 'r-client') throw unprocessable('Pick who this task is for.');
   if (assigneeId === user.id || isBoss(user)) return u;
-  if (!(await teamIds(user)).includes(assigneeId)) throw forbidden('You can only give tasks to yourself or people who report to you.');
+  if (!(await teamIds(user)).includes(assigneeId)) throw forbidden(ttPerm(user).scope === 'own' ? 'Your role can only add tasks for yourself.' : 'You can only give tasks to yourself or people who report to you.');
   return u;
 }
 
@@ -188,6 +195,7 @@ function notify(assignee, task, by) {
 
 export async function create(b, user) {
   const { id, assignee } = await db.transaction(async (trx) => {
+    if (!ttPerm(user).c) throw forbidden('Your role can’t give tasks.');
     const a = await checkAssignee(user, b.assigneeId, trx);
     const tid = await nextId(trx, 'teamTask');
     const status = b.status || 'To do';
