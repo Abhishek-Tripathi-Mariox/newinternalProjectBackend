@@ -26,6 +26,8 @@ const schema = z.object({
   //   openssl rand -base64 32      — keep it safe and never change it (stored creds can't be read without it).
   CREDENTIALS_KEY: z.string().optional()
     .refine((v) => !v || Buffer.from(v, 'base64').length === 32, 'CREDENTIALS_KEY must be 32 bytes, base64 (openssl rand -base64 32)'),
+  // Shared secret for the read-only founder summary (GET /api/v1/founder/summary, x-founder-key header).
+  FOUNDER_API_KEY: z.string().min(24, 'FOUNDER_API_KEY must be at least 24 characters (openssl rand -hex 24)').optional(),
   // ---- File storage: 's3' (AWS S3 or any S3-compatible store) or 'local' (disk; tests / quick local runs)
   STORAGE_DRIVER: z.enum(['s3', 'local']).default('s3'),
   S3_BUCKET: z.string().optional(),
@@ -134,6 +136,8 @@ export const config = Object.freeze({
   },
   // Tests get a fixed throwaway key; elsewhere credentials are disabled until CREDENTIALS_KEY is set.
   credentialsKey: env.CREDENTIALS_KEY ? Buffer.from(env.CREDENTIALS_KEY, 'base64') : env.NODE_ENV === 'test' ? Buffer.alloc(32, 7) : null,
+  // Founder summary is off until FOUNDER_API_KEY is set (tests use a fixed key).
+  founderApiKey: env.FOUNDER_API_KEY || (env.NODE_ENV === 'test' ? 'test-founder-key-0123456789abcdef' : null),
   cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
   appUrl: (env.APP_URL || env.CORS_ORIGINS.split(',')[0].trim()).replace(/\/+$/, ''),
   logLevel: env.NODE_ENV === 'test' ? (process.env.TEST_LOG_LEVEL || 'silent') : env.LOG_LEVEL,

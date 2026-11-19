@@ -23,6 +23,7 @@ import timeLogsRoutes from './modules/timesheets/timesheets.routes.js';
 import workdayRoutes from './modules/workday/workday.routes.js';
 import liveRoutes from './modules/workday/live.routes.js';
 import publicPortalRoutes from './modules/projects/portal.public.routes.js';
+import founderRoutes from './modules/founder/founder.routes.js';
 
 /** /api/v1 — public routes first, then everything behind `authenticate`. */
 export function apiRouter() {
@@ -31,6 +32,7 @@ export function apiRouter() {
   // Public
   r.use('/auth', authRoutes); // login / refresh / logout are public; /auth/me authenticates itself
   r.use('/public/portal', publicPortalRoutes); // client portal by share token
+  r.use('/founder', founderRoutes); // cofounder portal summary, guarded by FOUNDER_API_KEY (x-founder-key)
 
   // Authenticated
   r.use(authenticate);
