@@ -3,6 +3,7 @@ import { resetDb, app, closeDb } from './helpers.js';
 import { db } from '../src/db/knex.js';
 import { config } from '../src/config/index.js';
 import { periods } from '../src/modules/founder/founder.service.js';
+import { addDays, isSunday } from '../src/modules/workday/time.js';
 
 const URL = '/api/v1/founder/summary';
 const KEY = config.founderApiKey;
@@ -155,4 +156,24 @@ test('mariox summary', async () => {
     expect(by.km).toMatchObject({ checkInAt: null, timer: null });
     expect(d.team).toMatchObject({ in: 1, onBreak: 1, left: 1, notIn: 4 });
   }
+});
+
+test('team.days: past working days of attendance, newest first, Sundays skipped', async () => {
+  const day = [1, 2].map((i) => addDays(T, -i)).find((d) => !isSunday(d));
+  const at = (min) => new Date(day + min * MIN);
+  await db('attendance_events').insert([
+    { person_id: 'km', kind: 'login', at: at(11 * 60) }, // 11:00, after 10:30 → late
+    { person_id: 'km', kind: 'break', at: at(13 * 60), meta: { type: 'Lunch', planMin: 30 } },
+    { person_id: 'km', kind: 'resume', at: at(13 * 60 + 30) },
+    { person_id: 'km', kind: 'logout', at: at(18 * 60) },
+  ]);
+  const days = (await request(app).get(URL).set('x-founder-key', KEY)).body.data.team.days;
+  expect(days.length).toBeGreaterThanOrEqual(5);
+  expect(days.some((d) => isSunday(Date.parse(d.day)))).toBe(false);
+  expect(Date.parse(days[0].day)).toBeGreaterThan(Date.parse(days[1].day));
+  const km = days.find((d) => Date.parse(d.day) === day).people.find((p) => p.id === 'km');
+  expect(km).toEqual({
+    id: 'km', checkInAt: at(11 * 60).toISOString(), checkOutAt: at(18 * 60).toISOString(),
+    late: true, workedMin: 6 * 60 + 30, breakMin: 30, breaks: 1,
+  });
 });

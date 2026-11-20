@@ -12,11 +12,13 @@
 import { db } from '../../db/knex.js';
 import * as workday from '../workday/workday.repository.js';
 import { liveState } from '../workday/state.service.js';
-import { isLate } from '../workday/attendance.domain.js';
-import { DAY, sod, addDays, weekday, monthStart, parseDay, ymd, iso } from '../workday/time.js';
+import { groupAttendance, sumDay, isLate } from '../workday/attendance.domain.js';
+import { DAY, MINUTE, sod, addDays, weekday, isSunday, monthStart, parseDay, ymd, iso } from '../workday/time.js';
 
 const OPEN_BUG = ['Open', 'In progress', 'Retest', 'Reopened'];
 const WEEKS = 12;
+/** Past days of attendance sent with the summary (enough for yesterday and the whole current week). */
+const HISTORY_DAYS = 7;
 
 const num = (v) => Number(v) || 0;
 const ms = (v) => (v == null ? null : new Date(v).getTime());
@@ -157,13 +159,46 @@ async function extras(P, now, people, live) {
   };
 }
 
+/**
+ * Attendance for the past HISTORY_DAYS working days (Sundays skipped), newest first. Each day lists
+ * only the people who checked in. A day without a logout keeps checkOutAt null and counts work up
+ * to the last break / logout event only.
+ */
+async function attendanceHistory(T, now) {
+  const from = addDays(T, -HISTORY_DAYS);
+  const byPersonDay = groupAttendance(await workday.events(db, null, from, T), from, T);
+  const days = [];
+  for (let i = 1; i <= HISTORY_DAYS; i++) {
+    const day = addDays(T, -i);
+    if (isSunday(day)) continue;
+    const people = [];
+    for (const [key, list] of Object.entries(byPersonDay)) {
+      const [who, dayKey] = key.split('|');
+      if (Number(dayKey) !== day) continue;
+      const s = sumDay(list, day, now);
+      if (s.first == null) continue;
+      people.push({
+        id: who,
+        checkInAt: iso(s.first),
+        checkOutAt: iso(s.last),
+        late: isLate(s.first, day),
+        workedMin: Math.round(s.work / MINUTE),
+        breakMin: Math.round(s.br / MINUTE),
+        breaks: s.breaks.length,
+      });
+    }
+    days.push({ day: iso(day), people });
+  }
+  return days;
+}
+
 const STATE_ORDER = { in: 0, break: 1, left: 2, out: 3 };
 const stateOf = (x) => (!x.checkInAt ? 'out' : x.break ? 'break' : x.checkOutAt ? 'left' : 'in');
 
 export async function marioxSummary(now = Date.now()) {
   const P = periods(now);
 
-  const [closed, openLeads, newToday, newWeek, stageNames, owners, openFus, crs, bugsOpen, critical, projects, people, live, logsToday] = await Promise.all([
+  const [closed, openLeads, newToday, newWeek, stageNames, owners, openFus, crs, bugsOpen, critical, projects, people, live, logsToday, history] = await Promise.all([
     closedLeads(),
     db('leads').whereNotIn('status', ['Won', 'Lost']).select('status', 'owner_id', 'value'),
     db('leads').where('created_at', '>=', new Date(P.T)).count('* as n').first(),
@@ -180,6 +215,7 @@ export async function marioxSummary(now = Date.now()) {
     workday.people(),
     liveState(null, now),
     db('time_logs').where('day', ymd(P.T)).sum('hours as h').first(),
+    attendanceHistory(P.T, now),
   ]);
 
   const ids = projects.map((p) => p.id);
@@ -271,6 +307,7 @@ export async function marioxSummary(now = Date.now()) {
       late: team.filter((x) => x.late).length,
       hoursToday: Math.round(num(logsToday && logsToday.h) * 10) / 10,
       people: team,
+      days: history,
     },
     weekly,
   };
