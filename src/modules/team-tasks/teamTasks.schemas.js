@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const TT_ID = /^TT\d{1,9}$/;
-export const TT_STATUSES = ['To do', 'In progress', 'Done'];
+export const TT_STATUSES = ['To do', 'In progress', 'Reopened', 'Done'];
 export const TT_PRIORITIES = ['High', 'Medium', 'Low'];
 
 const USER_ID = z.string().regex(/^u-[a-z0-9-]{1,40}$/i, 'Pick who this task is for');
@@ -21,7 +21,7 @@ export const createSchema = z.object({
   title: z.string().trim().min(1, 'Add a title.').max(300),
   notes: z.string().max(10000).optional(),
   priority: z.enum(TT_PRIORITIES).optional(),
-  status: z.enum(TT_STATUSES).optional(),
+  status: z.enum(TT_STATUSES).exclude(['Reopened']).optional(), // a new task can't start reopened
   dueDate: due,
   estimateHours: estimate,
   projectId,
@@ -40,4 +40,7 @@ export const updateSchema = z.object({
   leadId,
   assigneeId: USER_ID.optional(),
   updateNote: z.string().max(5000).optional(),
+  comment: z.string().max(5000).optional(), // why (required when reopening a Done task)
 }).refine((b) => Object.keys(b).length > 0, 'Nothing to update');
+
+export const commentSchema = z.object({ text: z.string().trim().min(1, 'Write a comment.').max(5000) });

@@ -13,3 +13,5 @@ export async function create(req, res) { created(res, await svc.create(req.body,
 export async function update(req, res) { ok(res, await svc.update(id(req), req.body, req.user)); }
 export async function addAttachments(req, res) { created(res, await svc.addAttachments(id(req), req.files, req.user, typeof req.body?.title === 'string' ? req.body.title : '')); }
 export async function remove(req, res) { await svc.remove(id(req), req.user); noContent(res); }
+export async function activity(req, res) { ok(res, await svc.activity(id(req), req.user)); }
+export async function comment(req, res) { created(res, await svc.comment(id(req), req.body.text, req.user)); }

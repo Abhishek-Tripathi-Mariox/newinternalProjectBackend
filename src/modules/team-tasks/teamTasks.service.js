@@ -43,6 +43,19 @@ const day = (v) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Record one timeline event (inside the caller's transaction when given). */
+export async function logEvent(q, taskId, user, kind, { from = null, to = null, text = null, meta = {} } = {}) {
+  await q('team_task_events').insert({
+    task_id: taskId, user_id: user ? user.id : null, kind,
+    from_val: from == null ? null : String(from).slice(0, 300),
+    to_val: to == null ? null : String(to).slice(0, 300),
+    text: text ? String(text).slice(0, 5000) : null,
+    meta: JSON.stringify(meta || {}),
+  });
+}
+
+const FIELD_LABEL = { title: 'Title', notes: 'Details', priority: 'Priority', dueDate: 'Due date', estimateHours: 'Estimate', project: 'Project', lead: 'Lead' };
+
 /** Estimated hours: '' / null / 0 → not set. */
 const estValue = (v) => (v === '' || v == null || !(+v > 0) ? null : Math.round(+v * 100) / 100);
 
@@ -96,7 +109,18 @@ export async function list(query, user) {
   const rows = await scoped(baseQuery(), user, team).orderBy('t.created_at', 'desc').limit(p.limit).offset(p.offset);
   const [{ n }] = await scoped(db('team_tasks as t'), user, team).count({ n: '*' });
   const docs = await withUploaders(await documentsService.listForMany('team_task', rows.map((r) => r.id)));
-  return { items: rows.map((r) => toDto(r, user, team, docs[r.id])), meta: p.meta(Number(n)) };
+  const counts = await eventCounts(rows.map((r) => r.id));
+  return { items: rows.map((r) => ({ ...toDto(r, user, team, docs[r.id]), ...counts[r.id] })), meta: p.meta(Number(n)) };
+}
+
+/** {taskId: {comments, events}} for the list badges. */
+async function eventCounts(ids) {
+  const out = Object.fromEntries(ids.map((id) => [id, { comments: 0, events: 0 }]));
+  if (!ids.length) return out;
+  const rows = await db('team_task_events').whereIn('task_id', ids).groupBy('task_id')
+    .select('task_id', db.raw("count(*) filter (where kind = 'comment')::int as comments"), db.raw('count(*)::int as events'));
+  rows.forEach((r) => { out[r.task_id] = { comments: Number(r.comments), events: Number(r.events) }; });
+  return out;
 }
 
 async function readable(id, user, q = db) {
@@ -109,7 +133,7 @@ async function readable(id, user, q = db) {
 export async function get(id, user) {
   const { row, team } = await readable(id, user);
   const docs = await withUploaders({ [id]: await documentsService.listFor('team_task', id) });
-  return toDto(row, user, team, docs[id]);
+  return { ...toDto(row, user, team, docs[id]), ...(await eventCounts([id]))[id] };
 }
 
 /** For document downloads / removal: null when the user can't see the task, else its rights. */
@@ -130,7 +154,8 @@ export async function addAttachments(id, files, user, title = '') {
     if (!toDto(row, user, team).canUpdateStatus) throw forbidden('Only the assignee, the person who gave this task or their manager can add files to it.');
     if (!files || !files.length) throw unprocessable('Pick at least one file.');
     if (String(title || '').length > 200) throw unprocessable('Keep the file title under 200 characters.');
-    await documentsService.attach('team_task', id, files, user, db, { title });
+    const added = await documentsService.attach('team_task', id, files, user, db, { title });
+    await logEvent(db, id, user, 'attach', { text: String(title || '').trim() || null, meta: { files: added.map((d) => ({ id: d.id, name: d.name })) } });
   } catch (e) {
     await documentsService.discard(files);
     throw e;
@@ -213,6 +238,7 @@ export async function create(b, user) {
       created_by: user.id,
       done_at: status === 'Done' ? new Date() : null,
     });
+    await logEvent(trx, tid, user, 'created', { to: a.name, text: b.notes || null, meta: { status, priority: b.priority || 'Medium', dueDate: b.dueDate || null } });
     return { id: tid, assignee: a };
   });
   const dto = await get(id, user);
@@ -241,11 +267,39 @@ export async function update(id, b, user) {
       reassigned = await checkAssignee(user, b.assigneeId, trx);
       patch.assignee_id = reassigned.id;
     }
+    const comment = (b.comment || '').trim();
     if (b.status !== undefined && b.status !== row.status) {
+      // Reopening finished work needs a reason, so the timeline shows why.
+      if (b.status === 'Reopened' && row.status !== 'Done') throw unprocessable('Only a Done task can be reopened.');
+      if (row.status === 'Done' && !comment) throw unprocessable('Write why you are reopening this task.');
       patch.status = b.status;
       patch.done_at = b.status === 'Done' ? new Date() : null;
     }
     if (Object.keys(patch).length) await trx('team_tasks').where({ id }).update(patch);
+
+    // Timeline: what changed, by whom.
+    if (patch.status) await logEvent(trx, id, user, 'status', { from: row.status, to: patch.status, text: comment || null, meta: { reopened: row.status === 'Done' } });
+    else if (comment) await logEvent(trx, id, user, 'comment', { text: comment });
+    if (b.updateNote !== undefined && (b.updateNote || '').trim() !== (row.update_note || '').trim() && (b.updateNote || '').trim()) {
+      await logEvent(trx, id, user, 'note', { text: b.updateNote.trim() });
+    }
+    if (reassigned) {
+      const old = await trx('users').where({ id: row.assignee_id }).first('name');
+      await logEvent(trx, id, user, 'assign', { from: old ? old.name : row.assignee_id, to: reassigned.name });
+    }
+    const changes = [];
+    const add = (field, from, to) => { if (String(from ?? '') !== String(to ?? '')) changes.push({ field, label: FIELD_LABEL[field], from: from ?? '', to: to ?? '' }); };
+    if (patch.title !== undefined) add('title', row.title, patch.title);
+    if (patch.notes !== undefined && patch.notes !== row.notes) changes.push({ field: 'notes', label: FIELD_LABEL.notes, from: '', to: '' });
+    if (patch.priority !== undefined) add('priority', row.priority, patch.priority);
+    if (patch.due_date !== undefined) add('dueDate', day(row.due_date), patch.due_date);
+    if (patch.estimate_hours !== undefined) add('estimateHours', row.estimate_hours == null ? '' : `${Number(row.estimate_hours)}h`, patch.estimate_hours == null ? '' : `${patch.estimate_hours}h`);
+    if (patch.project_id !== undefined) {
+      const [o, n] = await Promise.all([row.project_id, patch.project_id].map((x) => (x ? trx('projects').where({ id: x }).first('name') : null)));
+      add('project', o ? o.name : '', n ? n.name : '');
+    }
+    if (patch.lead_id !== undefined) add('lead', row.lead_id || '', patch.lead_id || '');
+    if (changes.length) await logEvent(trx, id, user, 'edit', { meta: { changes } });
   });
   const dto = await get(id, user).catch(() => null);
   if (reassigned && dto) notify(reassigned, dto, user);
@@ -261,4 +315,21 @@ export async function remove(id, user) {
     await trx('team_tasks').where({ id }).del();
     return cleanup;
   }).then((cleanup) => cleanup());
+}
+
+/** Timeline of one task, oldest first: [{id, kind, by, byName, from, to, text, meta, at}]. */
+export async function activity(id, user) {
+  await readable(id, user);
+  const rows = await db('team_task_events as e').leftJoin('users as u', 'u.id', 'e.user_id').where('e.task_id', id)
+    .orderBy('e.created_at').orderBy('e.id').select('e.*', 'u.name as user_name');
+  return rows.map((r) => ({
+    id: Number(r.id), kind: r.kind, by: r.user_id, byName: r.user_name || 'Someone', from: r.from_val, to: r.to_val, text: r.text, meta: r.meta || {}, at: iso(r.created_at),
+  }));
+}
+
+/** Anyone who can see the task can comment on it. */
+export async function comment(id, text, user) {
+  await readable(id, user);
+  await logEvent(db, id, user, 'comment', { text: text.trim() });
+  return activity(id, user);
 }

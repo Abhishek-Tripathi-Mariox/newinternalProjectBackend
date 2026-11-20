@@ -58,8 +58,26 @@ describe('team tasks', () => {
 
   test('manager edits, reassigns within their team, deletes', async () => {
     const pm = await as('pm@test.io');
-    const r = await pm.patch(`${API}/${tid}`).send({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'In progress' });
-    expect(r.body.data).toMatchObject({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'In progress', doneAt: null });
+    // Reopening a Done task needs a reason.
+    const no = await pm.patch(`${API}/${tid}`).send({ status: 'In progress' });
+    expect(no.status).toBe(422);
+    expect(no.body.error.message).toBe('Write why you are reopening this task.');
+    const r = await pm.patch(`${API}/${tid}`).send({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'Reopened', comment: 'Missing the API section' });
+    // Timeline: created → status Done + note (assignee) → reopened with reason, reassigned, edited.
+    const act = (await pm.get(`${API}/${tid}/activity`)).body.data;
+    expect(act.map((e) => e.kind)).toEqual(['created', 'status', 'note', 'status', 'assign', 'edit']);
+    expect(act[3]).toMatchObject({ from: 'Done', to: 'Reopened', text: 'Missing the API section', meta: { reopened: true }, by: 'u-mj' });
+    expect(act[5].meta.changes).toEqual([{ field: 'title', label: 'Title', from: 'Prepare release notes', to: 'Release notes v2' }]);
+    const c = await pm.post(`${API}/${tid}/comments`).send({ text: 'Please add screenshots' });
+    expect(c.status).toBe(201);
+    expect(c.body.data.at(-1)).toMatchObject({ kind: 'comment', text: 'Please add screenshots' });
+    expect((await (await as('qa@test.io')).get(`${API}/${tid}/activity`)).status).toBe(404);
+    expect(r.body.data).toMatchObject({ title: 'Release notes v2', assigneeId: 'u-vg', status: 'Reopened', doneAt: null });
+    // "Reopened" only comes from Done.
+    expect((await pm.patch(`${API}/${tid}`).send({ status: 'In progress' })).status).toBe(200);
+    const bad = await pm.patch(`${API}/${tid}`).send({ status: 'Reopened' });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.message).toBe('Only a Done task can be reopened.');
     expect((await pm.patch(`${API}/${tid}`).send({ assigneeId: 'u-dn' })).status).toBe(403);
     expect((await pm.delete(`${API}/${tid}`)).status).toBe(204);
   });
@@ -95,9 +113,11 @@ describe('team tasks', () => {
     const own = await dev2.post(`${API}/${t.id}/attachments`).field('title', 'My progress notes').attach('files', Buffer.from('hello'), 'notes.txt');
     expect(own.status).toBe(201);
     expect(own.body.data.attachments[0]).toMatchObject({ title: 'My progress notes', uploadedBy: 'u-si', uploaderName: expect.any(String) });
+    expect((await dev2.get(`${API}/${t.id}/activity`)).body.data.at(-1)).toMatchObject({ kind: 'attach', text: 'My progress notes', meta: { files: [{ name: 'notes.txt' }] } });
     const [mine] = own.body.data.attachments;
     expect((await (await as('qa@test.io')).post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('x'), 'x.txt')).status).toBe(404);
     expect((await dev2.delete(`/api/v1/documents/${mine.id}`)).status).toBe(204);
+    expect((await dev2.get(`${API}/${t.id}/activity`)).body.data.at(-1)).toMatchObject({ kind: 'detach', meta: { files: [{ name: 'notes.txt' }] } });
     let r = await pm.post(`${API}/${t.id}/attachments`).attach('files', Buffer.from('spec'), 'spec.pdf');
     expect(r.status).toBe(201);
     const [spec] = r.body.data.attachments;

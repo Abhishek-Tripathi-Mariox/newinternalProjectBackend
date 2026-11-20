@@ -18,6 +18,8 @@ router.post('/', validate({ body: s.createSchema }), ctrl.create);
 router.get('/:id', validate({ params: s.idParams }), ctrl.get);
 router.patch('/:id', validate({ params: s.idParams, body: s.updateSchema }), ctrl.update);
 router.post('/:id/attachments', upload.array('files', 10), validate({ params: s.idParams }), ctrl.addAttachments);
+router.get('/:id/activity', validate({ params: s.idParams }), ctrl.activity);
+router.post('/:id/comments', validate({ params: s.idParams, body: s.commentSchema }), ctrl.comment);
 router.delete('/:id', validate({ params: s.idParams }), ctrl.remove);
 
 export default router;

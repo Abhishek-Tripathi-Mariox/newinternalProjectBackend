@@ -208,6 +208,10 @@ async function remove(id, user) {
   const doc = await loadDoc(id);
   await checkAccess(doc, user, 'e');
   await db('documents').where({ id }).del();
+  if (doc.entity_type === 'team_task') {
+    const { logEvent } = await import('../team-tasks/teamTasks.service.js');
+    await logEvent(db, doc.entity_id, user, 'detach', { meta: { files: [{ id: doc.id, name: doc.name }] }, text: doc.title || null });
+  }
   await removeObjects([doc.storage_path]);
 }
 
