@@ -248,12 +248,18 @@ export async function endShiftForm(user) {
     return form;
   }
   const [projects, team, todays] = await Promise.all([repo.projects(db), repo.projectTeam(db), repo.logsOn(db, ymd(T), pid)]);
-  const mine = new Set(team.filter((x) => x.member_id === pid).map((x) => x.project_id));
+  const ms = await repo.milestonesOf(db, projects.map((p) => p.id));
+  // "My" projects: on the project team, its PM, or on one of its milestone teams.
+  const msMine = await db('milestone_members as mm').join('milestones as m', 'm.id', 'mm.milestone_id').where('mm.member_id', pid).distinct('m.project_id');
+  const mine = new Set(team.filter((x) => x.member_id === pid).map((x) => x.project_id)
+    .concat(projects.filter((p) => p.pm_member_id === pid).map((p) => p.id), msMine.map((x) => x.project_id)));
+  const OPEN = ['Running', 'Planning', 'On hold'];
+  // Pre-filled rows: running projects I'm on, then open projects I manage (PM), then anything logged / timed today.
   const ids = projects.filter((p) => p.status === 'Running' && mine.has(p.id)).map((p) => p.id);
+  projects.filter((p) => p.pm_member_id === pid && OPEN.includes(p.status) && !ids.includes(p.id)).forEach((p) => ids.push(p.id));
   todays.forEach((l) => { if (!ids.includes(l.project_id)) ids.push(l.project_id); });
   const tm = st.timer;
   if (tm && !ids.includes(tm.project_id)) ids.push(tm.project_id);
-  const ms = await repo.milestonesOf(db, projects.map((p) => p.id));
   form.rows = ids.length ? ids.map((id) => {
     const ls = todays.filter((l) => l.project_id === id);
     const run = tm && tm.project_id === id;

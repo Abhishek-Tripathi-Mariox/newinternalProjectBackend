@@ -229,6 +229,19 @@ describe('PM and sales end-shift forms', () => {
     expect(f.pmRows[0].st).toBe('On track');
   });
 
+  test('projects I manage (even off the team list / not running) are pre-filled and listed as mine', async () => {
+    const pmRow = await db('projects').where({ id: 'PR-102' }).first('status');
+    await db('projects').where({ id: 'PR-102' }).update({ status: 'Planning' });
+    await db('project_members').where({ project_id: 'PR-102', member_id: 'mj' }).del();
+    try {
+      const f = (await (await as('pm@test.io')).get(`${W}/end-shift`)).body.data;
+      expect(f.rows.map((r) => r.p)).toContain('PR-102');
+      expect(f.projects.find((x) => x.id === 'PR-102')).toMatchObject({ onTeam: true });
+    } finally {
+      await db('projects').where({ id: 'PR-102' }).update({ status: pmRow.status });
+    }
+  });
+
   test('sales form has auto stats; summary is required', async () => {
     await db('lead_activities').insert([{ lead_id: 'MX-1002', kind: 'call', text: 'Called Riya' }, { lead_id: 'MX-1002', kind: 'email', text: 'Sent deck' }]);
     const se = await as('se@test.io');
